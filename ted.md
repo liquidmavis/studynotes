@@ -91,6 +91,20 @@ Github support emoji!
 
 
 
+## **记录下平时的笔记**
+
+笔记中需要用到latex公式的，因为github上不能正确解析，就转成了pdf上传，其他正常上传markdown格式:rocket:
+
+
+
+笔记中主要记录:
+
+- [x] java​ ​ ​ ​    ​       ​       ​    :stuck_out_tongue_winking_eye::stuck_out_tongue_winking_eye:
+
+- [x] 侧信道​ ​  ​       ​      ​     :stuck_out_tongue_winking_eye::stuck_out_tongue_winking_eye:
+- [x] 论文​ ​    ​       ​       ​      :stuck_out_tongue_winking_eye::stuck_out_tongue_winking_eye:
+  :stuck_out_tongue_winking_eye::stuck_out_tongue_winking_eye::stuck_out_tongue_winking_eye:
+
 
 
 

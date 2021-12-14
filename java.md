@@ -25,6 +25,18 @@
 
 
 
+
+
+## 漏洞
+
+### log4j漏洞
+
+利用log4j
+
+
+
+
+
 ## 基础
 
 ### Object
@@ -857,7 +869,7 @@ public class ReentrantReadWriteLock
 
 
 
-
+​                  
 
 #### 阻塞队列
 
@@ -975,6 +987,83 @@ class MyMutux {
 
 
 
+#### ThreadLocal
+
+用该类可以确保每个线程存取自己的相关信息
+
+
+
+而下图的t.threadLocals是Thread类对象保存的ThreadLocalMap
+
+```java
+public T get() {
+        Thread t = Thread.currentThread();
+        ThreadLocalMap map = getMap(t);
+        if (map != null) {
+            ThreadLocalMap.Entry e = map.getEntry(this);
+            if (e != null) {
+                @SuppressWarnings("unchecked")
+                T result = (T)e.value;
+                return result;
+            }
+        }
+        return setInitialValue();
+        
+ThreadLocalMap getMap(Thread t) {
+        return t.threadLocals;
+    }
+
+```
+
+ThreadLocalMap是静态类
+
+```java
+static class ThreadLocalMap {
+
+        /**
+         * The entries in this hash map extend WeakReference, using
+         * its main ref field as the key (which is always a
+         * ThreadLocal object).  Note that null keys (i.e. entry.get()
+         * == null) mean that the key is no longer referenced, so the
+         * entry can be expunged from table.  Such entries are referred to
+         * as "stale entries" in the code that follows.
+         */
+        static class Entry extends WeakReference<ThreadLocal<?>> {
+            /** The value associated with this ThreadLocal. */
+            Object value;
+
+            Entry(ThreadLocal<?> k, Object v) {
+                super(k);
+                value = v;
+            }
+        }
+```
+
+
+
+```java
+public class ThreadLocalTest {
+    public static void main(String[] args) {
+        ThreadLocal<Integer> threadLocal = new ThreadLocal<>();
+        ExecutorService pool = Executors.newCachedThreadPool();
+        for (int i = 0; i < 5; i++) {
+            pool.execute(()->{
+                int rand = (int)(Math.random()*10);
+                threadLocal.set(rand);
+                System.out.println(Thread.currentThread().getId()+"  "+rand);
+            });
+        }
+        for (int i = 0; i < 5; i++) {
+            pool.execute(()->{
+                System.out.println(Thread.currentThread().getId()+" "+threadLocal.get());
+            });
+        }
+    }
+}
+```
+
+
+
 
 
 ### 网络编程
@@ -1074,6 +1163,241 @@ ByteBuffer.flip()转换ByteBuffer为读模式
 ByteBuffer.clear()转换为写模式
 
 ByteBuffer.hasRemaining()可以知道是否还有写模式的空间或者读模式数据可用
+
+
+
+
+
+### JDK8新特性
+
+#### Lambda表达式
+
+##### 标准格式
+
+()->{
+            System.out.println("女孩大大");
+        }
+
+()参数列表
+
+->没有意义
+
+{}方法体内容
+
+
+
+解决匿名内部类过于冗长的问题，下面这个如果不用lambda很繁琐
+
+```java
+public class FuncInterTest {
+    public static void main(String[] args) {
+        new Boy(()->{
+            System.out.println("女孩大大");
+        }).start();
+    }
+}
+//不用lambda
+public class FuncInterTest {
+    public static void main(String[] args) {
+       new Boy(new Girl() {
+            @Override
+            public void buy() {
+                System.out.println("女孩大大");
+            }
+        }).start();
+    }
+}
+@FunctionalInterface
+interface Girl{
+    public void buy();
+}
+class Boy{
+    Girl girl;
+    Boy(Girl girl){
+        this.girl = girl;
+    }
+    void start(){
+        girl.buy();
+    }
+}
+
+```
+
+可以从上面看到要实现lambda表达式，匿名类必须是个接口，并且有==@FunctionalInterface==注解，该注解会检测接口里面提供只提供一个抽象方法，当然也可以不添加@FunctionalInterface注解
+
+lambda还在运行时候生成一个内部类，重写接口方法为lambda定义的实现
+
+
+
+##### lambda省略格式
+
+1. 小括号内参数类型可以省略
+
+2. 小括号只有一个参数，可以省略小括号
+
+3. 大括号内只有一个语句，可以省略大括号、return语句和语句分号
+
+   ```java
+   new Boy((int money)->{
+               return money>0;
+           }).start(5);
+   省略后
+   new Boy(money-> money>0).start(5);
+   ```
+
+
+
+##### 匿名内部类和lambda的区别
+
+- 所需类型不一样
+  - 匿名内部类可以是类、接口、抽象类
+  - lambda必须为接口
+- 抽象方法数量不一样
+  - 匿名内部类可以是多个方法
+  - lambda必须只有一个
+- 实现原理不一样
+  - 匿名内部类是编译器生成class
+  - lambda是在运行时候生成class
+
+
+
+#### 接口的默认方法和静态方法
+
+##### 默认方法
+
+接口的默认方法不会使得实现类必须去重写，减小了实现类的工作量，方便扩展
+
+格式为
+
+```java
+interface 接口名{
+	修饰符 default 返回值类型 方法名(){
+        代码;
+    }
+}
+```
+
+
+
+使用方法：
+
+1. 实现类直接使用
+
+   ```java
+   public class InterfaceTest {
+       public static void main(String[] args) {
+           A a = new B();
+           a.haha();
+       }
+   }
+   interface A{
+       default void haha(){
+           System.out.println("hahh");
+       }
+   }
+   class B implements A{
+   
+   }
+   ```
+
+   
+
+2. 实现类对其重写
+
+
+
+##### 静态方法
+
+```java
+interface 接口名{
+	修饰符 static 返回值类型 方法名(){
+        代码;
+    }
+}
+```
+
+接口名直接调用方法名来使用静态方法
+
+但注意静态方法不允许继承和重写
+
+```java
+public class InterfaceTest {
+    public static void main(String[] args) {
+        A.haha();
+    }
+}
+interface A{
+    static void haha(){
+        System.out.println("hahh");
+    }
+}
+```
+
+
+
+#### 方法引用
+
+符号表示   **：：**
+
+应用场景 lambda所要实现的方案在其他方法中已经实现过了，直接使用方法引用对应方法
+
+
+
+常见引用方式
+
+1. instanceName::methodName 对象：：方法名
+
+   ```java
+   public class InterfaceTest {
+       public static void main(String[] args) {
+           InterfaceTest interfaceTest = new InterfaceTest();
+           interfaceTest.print(interfaceTest::haha);
+       }
+       public void print(A a){
+           a.hah();
+       }
+       public void haha(){
+           System.out.println("haha");
+       }
+       interface A{
+           void hah();
+       }
+   }
+   
+   ```
+
+2. className::staticMethodName 类名：：静态方法名
+
+   ```java
+   public class InterfaceTest {
+       public static void main(String[] args) {
+           InterfaceTest interfaceTest = new InterfaceTest();
+           interfaceTest.print(InterfaceTest::haha);
+       }
+       public void print(A a){
+           a.hah();
+       }
+       public static void haha(){
+           System.out.println("haha");
+       }
+       interface A{
+           void hah();
+       }
+   }
+   
+   ```
+
+   
+
+3. className::methonName 类名：：方法名
+
+4. className::new 类名：：new构造函数
+
+5. TypeName[]::new String[]:new 调用数组构造函数
+
+
+
+
 
 
 
@@ -1409,6 +1733,90 @@ public AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException 
 
 
 ## 设计模式
+
+### 单例模式
+
+需要保证类只生产一个对象
+
+分为饿汉和懒汉模式
+
+饿汉指在调用获得对象之前就已经生成好对象了
+
+```java
+class ThreadOk{
+    private static ThreadOk threadOk = new ThreadOk();
+    private ThreadOk(){
+    }
+    public static  ThreadOk getThreadOk(){
+        return threadOk;
+    }
+}
+```
+
+懒汉指只有在调用获得对象时候才会去生成对象
+
+```java
+class ThreadOk{
+    private static ThreadOk threadOk;
+    private ThreadOk(){
+    }
+    public static  ThreadOk getThreadOk(){
+        if(threadOk == null){
+            threadOk = new ThreadOk();
+        }
+        return threadOk;
+    }
+}
+```
+
+单例又分为线程安全和非线程安全，在多线程下为了保证只生产一个对象需要加锁或者使用静态内部类来生成对象，并且内部类生成对象也属于懒汉模式
+
+该方法不会因为加锁而降低性能，因为jvm保证多线程并发访问的正确性
+
+```java
+class ThreadOk{
+    private static class InstanceHolder{
+        private static ThreadOk threadOk = new ThreadOk();
+    }
+    private ThreadOk(){
+    }
+    public static synchronized ThreadOk getThreadOk(){
+        return InstanceHolder.threadOk;
+    }
+}
+```
+
+双重锁来保证多线程安全性
+
+```java
+class ThreadOk{
+    private volatile static ThreadOk threadOk;
+    private ThreadOk(){
+    }
+    public static  ThreadOk getThreadOk(){
+        if(threadOk!=null)return threadOk;
+        synchronized (ThreadOk.class){
+            if (threadOk==null){
+                threadOk = new ThreadOk();
+            }
+        }
+        return threadOk;
+    }
+}
+```
+
+使用枚举来创建单例，解决了线程安全等问题
+
+```java
+public enum SingleOk {
+    INSTANCE;
+    public void test(){
+        System.out.println("hi");
+    }
+}
+```
+
+
 
 ### 工厂模式
 
