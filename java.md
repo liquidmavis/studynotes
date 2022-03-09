@@ -170,11 +170,36 @@ java建议用户需要自己顶一个serialVersionUID变量在类中，当然自
 
 
 
+##### 序列化
+
+序列化在网络协议模型中在OSI中是展示层，展示层主要功能是把应用层对象转换成一段连续的二进制串。
+
+在TCP/IP协议中是应用层的一部分
+
+
+
 ### 代理
 
 1. 静态代理（每对一个对象进行代理就需要写一个代理类）
 2. 如果加入容器的目标对象有实现接口,用JDK代理
 3. 如果目标对象没有实现接口,用Cglib代理
+
+
+
+
+
+### 泛型
+
+```java
+/**
+第一个T代表泛型
+第二个T代表返回类型
+第三个代表传入的参数必须是泛型对应的类型
+**/
+private <T> T getStudent(List<T> list){
+ 	return ;
+}
+```
 
 
 
@@ -587,10 +612,6 @@ ConcurrentHashMap使用同步代码块，用于增加线程安全性
 使用Object的notify和wait方法
 
 使用这两个方法前都需要获得object对象的监视器锁
-
-```
-
-```
 
 ```java
 public class Example {
@@ -1113,6 +1134,16 @@ public class ThreadLocalTest {
 
 ### 网络编程
 
+#### 异步阻塞
+
+异步是指主线程调用后，由另外一个线程来实际执行
+
+阻塞是指主线程需要等待子线程执行完了才能执行下面的步骤。更仔细的来说，子线程调用结果没有返回，主线程需要挂起等待结果
+
+
+
+
+
 #### BIO
 
 bio是阻塞的I/O，可以用在并发量不高的网络中
@@ -1315,6 +1346,49 @@ ChannelPipeline其实就是链表，连接ChannelHandler
 
 
 
+##### EventLoop
+
+事件循环，基本思想循环遍历处理所有的事件，本质是单线程执行器（维护了一个Selector），里面run方法处理Channel源源不断的数据
+
+下面为EventLoop的类层次结构，基于NIO和并发API上建立
+
+我们看到EventLoop是拥有了任务调度的能力的，并且可以实现了迭代器功能
+
+![1639969389590](java.assets/1639969389590.png)
+
+Netty线程模型的性能在于对当前执行的Thread身份的确定，确定他是否分配给当前Channel以及他的EventLoop的那一线程
+
+如果当前线程是，那么执行提交的代码块，如果不是，加入到队列中
+
+
+
+###### fireChannelActive
+
+在channel调用fireChannelActive会调用invokeChannelActive，里面查看下一个handler的eventLoop是不是当前的，如果是直接调用下一个handler，如果不是的话，就需要用下一个handler的eventLoop建立新线程来执行下一个handler
+
+```java
+public ChannelHandlerContext fireChannelActive() {
+        invokeChannelActive(this.findContextInbound());
+        return this;
+    }
+
+    static void invokeChannelActive(final AbstractChannelHandlerContext next) {
+        EventExecutor executor = next.executor();
+        if (executor.inEventLoop()) {
+            next.invokeChannelActive();
+        } else {
+            executor.execute(new Runnable() {
+                public void run() {
+                    next.invokeChannelActive();
+                }
+            });
+        }
+
+    }
+```
+
+
+
 ##### ByteBuf
 
 Netty自己封装了ByteBuff，内部维护了读位置和写位置，不用像ByteBuff那样用flip来切换模式了
@@ -1322,6 +1396,139 @@ Netty自己封装了ByteBuff，内部维护了读位置和写位置，不用像B
 本质就是一个由不同的索引分布控制读访问和写访问的字节数组
 
 ![1639569395855](java.assets/1639569395855.png)
+
+###### 直接内存和堆内存
+
+直接内存创建和销毁代价昂贵，但读写性能高，适合配合池化功能使用
+
+直接内存对GC压力小，因为这部分内存不受jvm垃圾回收管理 
+
+
+
+###### 池化
+
+池化作用在于可以重用ByteBuf
+
+- 没有池化，每次都要创建新的ByteBuf实例，这个操作对直接内存代价昂贵
+- 重用ByteBuf提升分配效率
+- 高并发时候，节约内存减少内存溢出
+
+
+
+###### ByteBuf分配
+
+ByteBufAllocator实现了池化功能
+
+Unpooled缓冲区，创建的都是非池化的
+
+```java
+ByteBuf byteBuf = Unpooled.wrappedBuffer(bytes);
+```
+
+
+
+###### 零拷贝
+
+可以快速高效的将数据从文件系统移动到网络接口，而不需要将其从内核空间复制到用户空间
+
+如果当前以及创建了两个ByteBuf了，需要把他们两个合并，传统的需要复制他们两个值到一个新的ByteBuf，这之间会涉及到多次拷贝
+
+而使用==CompositeByteBuf==合并两个ByteBuf的话就不需要复制了，相当于复用了两个ByteBuf缓冲区 
+
+
+
+**slice**
+
+因为slice是零拷贝，直接对原内存进行分割
+
+如果按照下面的来传输两个切片，将在第一个切片发送后报错。
+
+==原因==是writeInbound发送完数据后会自动释放slice和其对应的byteBuf内存，如果想要成功发送，需要添加一个retain（）在之前
+
+```java
+ByteBuf slice = byteBuf.slice(0, 50);
+ByteBuf slice1 = byteBuf.slice(50, byteBuf.readableBytes() - 50);
+byteBuf.retain();//使引用计数器加1，不被释放
+embeddedChannel.writeInbound(slice);
+embeddedChannel.writeInbound(slice1);
+```
+
+
+
+###### 优势
+
+- 池化重用ByteBuf实例
+- 读写指针分离，更方便简单
+- 可以自动扩容
+- 支持链式调用
+- 体现了零拷贝
+
+
+
+##### 粘包和半包
+
+粘包：多个tcp包一起合并发送
+
+- 原因：
+  - 应用层接收方的Bytebuf太大了
+  - tcp层的滑动窗口导致：接收方处理不及时且窗口足够大
+
+半包：一个tcp包被分成了多次发送
+
+- 原因：
+  - 接收方的Bytebuf太小了
+  - 滑动窗口：接收方窗口剩余大小不够容纳发送方的报文大小，只能先存储一点，导致半包
+
+==本质是tcp基于流式协议，消息之间没有边界==
+
+
+
+###### 滑动窗口
+
+为什么有滑动窗口？
+
+IP层不可靠，需要TCP层加确认机制来保证，早期发送方发送数据需要添加计时器，如果超时没有收到ACK就重传，这样每个包都需要等待ack确认，降低了通信的效率。
+
+==引入了滑动窗口，窗口大小决定了无需等待应答就可以继续发送的最大值==，实际起到了缓冲区的作用，窗口内的数据才可以发送，当某个段的消息ack发送回来后，那么窗口就可以向后移动
+
+
+
+![img](java.assets/20160906072310877)
+
+
+
+###### 解决
+
+- 短连接：发送方发送完消息就断开，可以解决粘包问题，但耗费连接资源
+- FixLengthFrameDecoder：可以固定接受的长度，但是数据本身长度不够的话，会填充无用的字符
+- LinedBasedFrameDecoder：使用换行符来分割数据
+- LengthFiledBasedFrameDecoder：会在真实数据前面添加消息的长度
+
+
+
+
+
+**LengthFiledBasedFrameDecoder**
+
+参数：
+
+- maxFrameLength:帧的最大长度
+- lengthFieldOffset：保存数据长度的字段位置
+- lengthFiledLength：长度字段的空间大小
+- lengthAdjustment：长度域的偏移量矫正
+- initialBytesToStrip：剔除长度前面的数据
+
+如果出现了半包现象如下
+
+```java
+ ByteBuf slice = byteBuf.slice(0, 50);
+ ByteBuf slice1 = byteBuf.slice(50, byteBuf.readableBytes() - 50);
+//那么系统会报错
+//添加new LengthFieldBasedFrameDecoder(1024,12,4,0,0)
+//就会正常接受到包，并且数据没有传输完全的情况，不会给下一个handler
+```
+
+
 
 
 
@@ -1375,7 +1582,9 @@ ChannelHandler生命周期
 
 
 
-##### ChannelInboundHandler和ChannelOutboundHandler
+##### Handler
+
+ChannelInboundHandler和ChannelOutboundHandler
 
 包含的方法与Channel的生命周期息息相关，在上面状态的基础上还有读写状态改变
 
@@ -1415,21 +1624,123 @@ ReleaseCountUtil.release(msg);
 
 ![1639967247136](java.assets/1639967247136.png)
 
-1. handlerAdded
 
-##### EventLoop
 
-事件循环，基本思想循环遍历处理所有的事件
+##### 优化与源码
 
-下面为EventLoop的类层次结构，基于NIO和并发API上建立
+###### Connect_timeout_millis
 
-我们看到EventLoop是拥有了任务调度的能力的，并且可以实现了迭代器功能
+- 属于socketchannel参数
+- 用在客户端建立连接时，如果在指定毫秒内未连接，会跑出timeout异常
 
-![1639969389590](java.assets/1639969389590.png)
+在bootstrap的option方法中设置
 
-Netty线程模型的性能在于对当前执行的Thread身份的确定，确定他是否分配给当前Channel以及他的EventLoop的那一线程
+```java
+.option(ChannelOption.CONNECT_TIMEOUT_MILLIS,10000)
+```
 
-如果当前线程是，那么执行提交的代码块，如果不是，加入到队列中
+==源码查看如下==，本质是创建了一个定时任务，如果超时了执行定时任务并设置promise为失败，让主线程通过promise来结束连接
+
+```java
+AbstractNioChannel.this.connectTimeoutFuture = AbstractNioChannel.this.eventLoop().schedule(new Runnable() {
+   public void run() {
+     ChannelPromise connectPromise = AbstractNioChannel.this.connectPromise;
+     ConnectTimeoutException cause = new    ConnectTimeoutException("connection timed out: " + remoteAddress);
+     if (connectPromise != null && connectPromise.tryFailure(cause)) {
+                             AbstractNioUnsafe.this.close(AbstractNioUnsafe.this.voidPromise());
+                                    }
+                                }
+                            }, (long)connectTimeoutMillis, TimeUnit.MILLISECONDS);
+```
+
+
+
+###### ALLOCATOR
+
+bytebuf默认分配是基于下面配置文件类型
+
+如果是安卓系统就是非池化，如果不是就是默认池化
+
+```java
+String allocType = SystemPropertyUtil.get(
+                "io.netty.allocator.type", PlatformDependent.isAndroid() ? "unpooled" : "pooled");
+```
+
+
+
+###### RECVALLOCATOR
+
+决定butebuf的大小和是否是直接内存，与上面的ALLOCATOR配合使用
+
+其也是决定了入站的缓冲大小
+
+
+
+
+
+
+
+###### 连接队列
+
+三次握手时候：
+
+1. client发送SYN给server，状态修改为SYN_SEND，server收到后，状态改为了SYN_REVD，并将请求加入到sync queue队列中
+2. server回复SYN+ACK给client，client状态更改为ESTABLISHED，并发送ACK给server
+3. server收到ACK后，状态更改为ESTABLISHED，并把请求从syn queue队列中放到accep queue中
+
+
+
+==netty中通过，可以控制服务器端==
+
+```JAVA
+.option(ChannelOption.SO_BACKLOG,300)
+```
+
+**注意**：windows中以netty中为准，而在linux中要根据配置文件和netty中最小值为准
+
+
+
+###### 心跳检测
+
+用于在连接中，在客户端没有正常发送数据情况下，确认客户端还存在
+
+客户端配置如下
+
+```java
+//这里设置了关心了自己的写事件是否触发，设置了5秒
+.addLast(new IdleStateHandler(0,5,0)
+.addLast(new ChannelDuplexHandler(){
+      @Override
+      public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+          IdleStateEvent evt1 = (IdleStateEvent) evt;
+          if(evt1.state()== IdleState.WRITER_IDLE){
+          //发送心跳包给服务器，证明还活着
+               System.out.println("发送心跳包给服务器");
+               ctx.writeAndFlush(new PingMessage());
+           }
+         }
+  })
+```
+
+服务器设置如下
+
+服务器设置了关心有没有读取到客户端发送消息的事件，设置等待7秒
+
+如果没有收到心跳包消息那么就会断开与客户端联系
+
+```java
+.addLast(new IdleStateHandler(7,0,0))
+.addLast(new ChannelDuplexHandler(){
+    @Override
+      public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+         IdleStateEvent evt1 = (IdleStateEvent) evt;
+         if(evt1.state()== IdleState.READER_IDLE){
+         //没有收到回复直接断开
+         ctx.channel().close();
+                                            }
+                                        }
+                                    })
+```
 
 
 
@@ -1703,13 +2014,486 @@ interface A{
 
 ## Spring
 
-分为IOC和AOP两个
+### 注解
+
+#### @Configuration
+
+本质是使用了@Component注解，用来替代spring的application.xml文件，被此注解修饰的类会被自动装载到容器
+
+使用场景：用于编写配置的类，通常使用次注解。该注解写到主配置类上，其他配置类被@Import注解导入到主配置类中。
+
+```java
+@Configuration
+//导入另外一个副配置文件
+@Import(JdbcConfiguration.class)
+public class SpringConfiguration 
+```
+
+
+
+```java
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Component
+public @interface Configuration 
+```
+
+
+
+#### @ComponetScan
+
+用来扫描@Componet及其衍生类注解，负责把他们注入到容器中。
+
+```java
+@ComponentScan(value = "com.cuit.service")
+```
+
+这里主要到@Componet这些默认不给value值也会有名字，跟着spring代码查看命名规则
+
+会在**AnnotatedBeanDefinitionReader**这个类上区获取beanName的名字
+
+```java
+String beanName = (name != null ? name : this.beanNameGenerator.generateBeanName(abd, this.registry));
+```
+
+上面我们注意到是用了**beanNameGenerator**去生成beanName，该类的接口为，定义生成beanName的方法
+
+```java
+public interface BeanNameGenerator {
+    String generateBeanName(BeanDefinition var1, BeanDefinitionRegistry var2);
+}
+```
+
+跟到其子类**AnnotationBeanNameGenerator**，可以看到大概是**determineBeanNameFromAnnotation**有值得话就直接输出名字，没有的话生成默认名字
+
+```java
+if (definition instanceof AnnotatedBeanDefinition) {
+			String beanName = determineBeanNameFromAnnotation((AnnotatedBeanDefinition) definition);
+			if (StringUtils.hasText(beanName)) {
+				// Explicit bean name found.
+				return beanName;
+			}
+		}
+		// Fallback: generate a unique default bean name.
+		return buildDefaultBeanName(definition, registry);
+```
+
+我们继续跟进到**determineBeanNameFromAnnotation**里面，大概规则是获取类上的所有注解，for循环遍历注解获得其属性，判断其实不是@component注解，如果是的话获取其属性值value，没有的话返回null
+
+```java
+protected String determineBeanNameFromAnnotation(AnnotatedBeanDefinition annotatedDef) {
+		AnnotationMetadata amd = annotatedDef.getMetadata();
+		Set<String> types = amd.getAnnotationTypes();
+		String beanName = null;
+		for (String type : types) {
+			AnnotationAttributes attributes = AnnotationConfigUtils.attributesFor(amd, type);
+			if (isStereotypeWithNameValue(type, amd.getMetaAnnotationTypes(type), attributes)) {
+				Object value = attributes.get("value");
+				if (value instanceof String) {
+					String strVal = (String) value;
+					if (StringUtils.hasLength(strVal)) {
+						if (beanName != null && !strVal.equals(beanName)) {
+							throw new IllegalStateException("Stereotype annotations suggest inconsistent " +
+									"component names: '" + beanName + "' versus '" + strVal + "'");
+						}
+						beanName = strVal;
+					}
+				}
+			}
+		}
+		return beanName;
+	}
+```
+
+我们再看一下没有设置属性的话，默认名字的代码，可以看到是截取为类名并且是把首字母小写，这就是spring容器给bean命名规则
+
+```java
+	protected String buildDefaultBeanName(BeanDefinition definition) {
+		String shortClassName = ClassUtils.getShortName(definition.getBeanClassName());
+		return Introspector.decapitalize(shortClassName);
+	}
+```
+
+==这里我们可以自己写一个beanNameGenerator==步骤如下
+
+1. 编写beanNameGenerator的子类
+
+   1. ​	这里我设置如果没有设置属性值得话，自动命名为liquid，当然这里随便乱写的
+
+      ```java
+      public class LiquidNameGen implements BeanNameGenerator{
+          private static final String COMPONENT_ANNOTATION_CLASSNAME = "org.springframework.stereotype.Component";
+          public String generateBeanName(BeanDefinition beanDefinition, BeanDefinitionRegistry beanDefinitionRegistry) {
+              String beanName = null;
+              if(beanDefinition instanceof AnnotatedBeanDefinition){
+                  AnnotatedBeanDefinition beanDefinition1 = (AnnotatedBeanDefinition) beanDefinition;
+                  AnnotationMetadata metadata = beanDefinition1.getMetadata();
+                  //获取bean的所有定义信息
+                  Set<String> annotationTypes = metadata.getAnnotationTypes();
+                  for(String type:annotationTypes){
+                      //拿到注解的属性
+                      AnnotationAttributes annotationAttributes = AnnotationAttributes.fromMap(metadata.getAnnotationAttributes(type));
+                      //判断属性是否为null，同时必须是@componet及其衍生注解
+                      if (isStereotypeWithNameValue(type, metadata.getMetaAnnotationTypes(type), annotationAttributes)) {
+                          Object value = annotationAttributes.get("value");
+                          if (value instanceof String) {
+                              String strVal = (String) value;
+                              if (StringUtils.hasLength(strVal)) {
+                                  if (beanName != null && !strVal.equals(beanName)) {
+                                      throw new IllegalStateException("Stereotype annotations suggest inconsistent " +
+                                              "component names: '" + beanName + "' versus '" + strVal + "'");
+                                  }
+                                  beanName = strVal;
+                              }
+                          }
+                      }
+                  }
+              }
+              return beanName!=null?beanName:"liquid";
+          }
+          protected boolean isStereotypeWithNameValue(String annotationType,
+                                                      Set<String> metaAnnotationTypes, Map<String, Object> attributes) {
+      
+              boolean isStereotype = annotationType.equals(COMPONENT_ANNOTATION_CLASSNAME) ||
+                      (metaAnnotationTypes != null && metaAnnotationTypes.contains(COMPONENT_ANNOTATION_CLASSNAME)) ||
+                      annotationType.equals("javax.annotation.ManagedBean") ||
+                      annotationType.equals("javax.inject.Named");
+      
+              return (isStereotype && attributes != null && attributes.containsKey("value"));
+          }
+      }
+      ```
+
+      
+
+2. 设置其到@ComponetScan注解的属性nameGenerator中替换原本的类
+
+```java
+@ComponentScan(value = "com.cuit.service",nameGenerator = LiquidNameGen.class)
+```
+
+
+
+#### @Bean
+
+一般就用在方法上，把方法返回的对象存储到IOC容器中
+
+默认以方法名作为bean的名字
+
+```java
+	@Bean
+    public JdbcTemplate createJdbcTemplate(DataSource dataSource){
+        return new JdbcTemplate(dataSource);
+    }
+```
+
+
+
+#### @Import
+
+可以导入另外一个配置文件到**Import**注解所在的配置文件中，该注解也会把value值里面的类注册到容器中，这里通过**@import**导入的类的名字是该类的全限定名，而不是类名的小写了
+
+```java
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+public @interface Import {
+
+	/**
+	 * {@link Configuration}, {@link ImportSelector}, {@link ImportBeanDefinitionRegistrar}
+	 * or regular component classes to import.
+	 */
+	Class<?>[] value();
+
+}
+```
+
+
+
+##### 高级应用
+
+用于加载自定义的注解类或者不需要spring原生的注解来注册类到容器，需要实现类**ImportBeanDefinitionRegistrar**或者**ImportSelector**这两个类
+
+比如我这里不需要用@bean或者@component注解来注册类，直接加载指定路径下的类
+
+1、实现**ImportBeanDefinitionRegistrar**
+
+```java
+public class MyImportRegistryt implements ImportBeanDefinitionRegistrar {
+    private String expression = null;
+    private String packages = null;
+    private static final String PACKAGE = "custom.package";
+    private static final String  EXPRESSION = "custom.expression";
+
+    public MyImportRegistryt() {
+        try{
+            Properties properties = PropertiesLoaderUtils.loadAllProperties("importRegis.properties");
+            expression = properties.getProperty(EXPRESSION);
+            packages = properties.getProperty(PACKAGE);
+        }catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+
+    public void registerBeanDefinitions(AnnotationMetadata importingClassMetadata, BeanDefinitionRegistry registry) {
+        ClassPathBeanDefinitionScanner classPathBeanDefinitionScanner = new ClassPathBeanDefinitionScanner(registry,false);
+        AspectJTypeFilter aspectJTypeFilter = new AspectJTypeFilter(expression,MyImportRegistryt.class.getClassLoader());
+        classPathBeanDefinitionScanner.addIncludeFilter(aspectJTypeFilter);
+        classPathBeanDefinitionScanner.scan(packages);
+    }
+}
+
+//指定配置文件
+custom.expression=com.cuit.importTest.service..*
+custom.package=com.cuit.importTest.service
+```
+
+2、导入该类到配置中
+
+```java
+@Configuration
+@Import(MyImportRegistryt.class)
+public class SpringImportConfiguration {
+}
+```
+
+这样就可以注册com.cuit.importTest.service包下的类
+
+
+
+==其实spring的原生注解==@componet就是实现了上面方法来达到的
+
+
+
+#### 注解注入时机和设定条件
+
+##### @DependsOn
+
+使用此注解指定bean的创建顺序
+
+```java
+@Target({ElementType.TYPE, ElementType.METHOD})
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+public @interface DependsOn {
+
+	String[] value() default {};
+
+}
+```
+
+下面的**EventListener**在**eventSource**创建之后
+
+```java
+@Component
+@DependsOn("eventSource")
+public class EventListener {
+    public EventListener() {
+        System.out.println("监听器创建");
+    }
+}
+```
+
+
+
+##### @Conditional
+
+```java
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.TYPE, ElementType.METHOD})
+public @interface Conditional {
+
+	/**
+	 * All {@link Condition}s that must {@linkplain Condition#matches match}
+	 * in order for the component to be registered.
+	 */
+	Class<? extends Condition>[] value();
+
+}
+```
+
+
+
+考虑有不同环境的情况下，需要切换数据库
+
+这下面使用windows数据库就需要满足Conditional中的WindowsConditoion条件，同理linux也是
+
+```java
+@Bean("dataSource")
+    @Conditional(WindowsCondition.class)
+    public DataSource createWindowsDataSource(){
+        DriverManagerDataSource driverManagerDataSource = new DriverManagerDataSource();
+        driverManagerDataSource.setDriverClassName(driver);
+        driverManagerDataSource.setUrl(url);
+        driverManagerDataSource.setUsername(username);
+        driverManagerDataSource.setPassword(password);
+        return driverManagerDataSource;
+    }
+
+    @Bean("dataSource")
+    @Conditional(LinuxCondition.class)
+    public DataSource createLinuxDataSource(@Value("${linux.jdbc.driver}") String linuxDriver,@Value("${linux.jdbc.url}")String linuxUrl,
+                                       @Value("${linux.jdbc.username}")String linuxUsername,@Value("${linux.jdbc.password}")String linuxPassword){
+        DriverManagerDataSource driverManagerDataSource = new DriverManagerDataSource();
+        driverManagerDataSource.setDriverClassName(linuxDriver);
+        driverManagerDataSource.setUrl(linuxUrl);
+        driverManagerDataSource.setUsername(linuxUsername);
+        driverManagerDataSource.setPassword(linuxPassword);
+        return driverManagerDataSource;
+    }
+```
+
+实现Condition接口,判断当前环境是windows吗，如果是就允许注册对象，如果不是就不允许
+
+```java
+public class WindowsCondition implements Condition{
+    public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+        Environment environment = context.getEnvironment();
+        String osName = environment.getProperty("os.name");
+        if(osName.contains("Windows")){
+            return true;
+        }
+        return false;
+    }
+}
+
+public class LinuxCondition implements Condition {
+    public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+        Environment environment = context.getEnvironment();
+        String osName = environment.getProperty("os.name");
+        if(osName.contains("Linux")){
+            return true;
+        }
+        return false;
+    }
+}
+```
+
+##### @Profile
+
+用于配置切换环境一般为@Profile("test")
+
+可以看到该注解下有**@Conditional(ProfileCondition.class)**，需要符合里面类的条件才能把**@Profile**修辞的注解的类注册到容器
+
+```java
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.TYPE, ElementType.METHOD})
+@Documented
+@Conditional(ProfileCondition.class)
+public @interface Profile {
+
+	/**
+	 * The set of profiles for which the annotated component should be registered.
+	 */
+	String[] value();
+
+}
+```
+
+**ProfileCondition**可以看到该类用来判断当前环境下profile的值active环境是否对应value中的test值，如果对应，那么返回true
+
+```java
+class ProfileCondition implements Condition {
+
+	@Override
+	public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+		if (context.getEnvironment() != null) {
+			MultiValueMap<String, Object> attrs = metadata.getAllAnnotationAttributes(Profile.class.getName());
+			if (attrs != null) {
+				for (Object value : attrs.get("value")) {
+					if (context.getEnvironment().acceptsProfiles(((String[]) value))) {
+						return true;
+					}
+				}
+				return false;
+			}
+		}
+		return true;
+	}
+
+}
+```
+
+那么acitve环境对应的注解为**@ActiveProfiles("test")**，表test明当前激活环境为test
+
+
+
+#### @EnableAspectJAutoProxy
+
+开启aop自动代理
+
+proxyTargetClass默认为false使用jdk代理，为true使用cglib代理
+
+```java
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Import(AspectJAutoProxyRegistrar.class)
+public @interface EnableAspectJAutoProxy {
+    /**
+	 * Indicate whether subclass-based (CGLIB) proxies are to be created as opposed
+	 * to standard Java interface-based proxies. The default is {@code false}.
+	 */
+	boolean proxyTargetClass() default false;
+
+	/**
+	 * Indicate that the proxy should be exposed by the AOP framework as a {@code ThreadLocal}
+	 * for retrieval via the {@link org.springframework.aop.framework.AopContext} class.
+	 * Off by default, i.e. no guarantees that {@code AopContext} access will work.
+	 * @since 4.3.1
+	 */
+	boolean exposeProxy() default false;
+
+}
+```
+
+该注解会导入**AspectJAutoProxyRegistrar**类，该类实现了**ImportBeanDefinitionRegistrar**，用来注册指定类到容器，该类下面的一个方法就是在注册类到容器，如下
+
+```java
+AopConfigUtils.registerAspectJAnnotationAutoProxyCreatorIfNecessary(registry);
+//最终会把AnnotationAwareAspectJAutoProxyCreator.class注册到容器，beanDefinition就是那个类
+registry.registerBeanDefinition("org.springframework.aop.config.internalAutoProxyCreator", beanDefinition);
+```
+
+
+
+#### @Pointcut
+
+切入点表达式，其他切面的其他通知要使用的话，直接引用pointcut的全限定方法名
+
+```java
+@Component
+@Aspect
+public class LogUtil {
+
+    @Pointcut(value="execution(* com.cuit.config.Aspect.*.*(..))")
+    private void pointcut1(){
+
+    }
+
+    @Before("com.cuit.config.utils.LogUtil.pointcut1()")
+    public void printLog(){
+        System.out.println("打印日志");
+    }
+}
+```
+
+
+
+#### 扩展目标类
+
+##### @DeclareParents
+
+类级别增强
+
+
+
+
 
 ### IOC
 
 控制反转，就是把java对象生成交给了spring来管理
-
-
 
 对象谁来创建？
 
@@ -1727,12 +2511,6 @@ Object obj =  ctor.newInstance();
 
 
 
-
-
- 
-
-
-
 #### IOC容器设计与实现
 
 有两个主要容器系列：一个是beanFactory接口的简单容器系列，只实现了容器最基本的功能；一个是ApplicationContext，他作为容器高级形态
@@ -1747,7 +2525,55 @@ spring通过定义BeanDefintion来管理基于spring的各种对象及其依赖�
 
 
 
-#### beanFactory比较
+#### beanFactory
+
+其中**ListBeanFactory**和**HierarchicalBeanFactory**是两个不同分支的实现
+
+
+
+**ApplicationContext**
+
+```
+继承了他们两个，是高级实现类
+提供了国家化支持MessageSource接口
+发布应用文上下文事件ApplicationEventPublisher
+丰富资源获取功能ResourcePatternResolver
+```
+
+**ConfigurableApplicationContext**
+
+```
+该接口里面包含了核心方法refresh()，是ioc容器的创建过程
+```
+
+**AnnotationConfigApplicationContext**
+
+1、this();用来初始化reader和scaner为扫描配置文件做准备
+
+2、register或者scan方法是用来把默认类和配置类注册到容器中
+
+3、refresh方法也就是用户自定义类的注册
+
+```java
+public AnnotationConfigApplicationContext(Class<?>... annotatedClasses) {
+		this();
+		register(annotatedClasses);
+		refresh();
+	}
+
+	/**
+	 * Create a new AnnotationConfigApplicationContext, scanning for bean definitions
+	 * in the given packages and automatically refreshing the context.
+	 * @param basePackages the packages to check for annotated classes
+	 */
+	public AnnotationConfigApplicationContext(String... basePackages) {
+		this();
+		scan(basePackages);
+		refresh();
+	}
+```
+
+
 
 beanfactory和factoryBean，前一个是管理bean的，后一个适用于那些在配置文件中不好生成的bean（添加信息过多太繁琐的）提供了了一种自定义方式生成bean
 
@@ -1773,6 +2599,18 @@ public class LiquidFactoryBean implements FactoryBean {
 
 
 
+#### BeanDefinition
+
+存储bean定义信息的数据结构
+
+BeanDefinitionHolder是对BeanDefinition的封装，也就是BeanDefinition的name和其自身封装到BeanDefinitionHolder中
+
+
+
+
+
+
+
 #### IOC容器初始化
 
 IOC容器初始化是由前面介绍的refresh()方法来启动的。分为下面三步：
@@ -1782,6 +2620,77 @@ IOC容器初始化是由前面介绍的refresh()方法来启动的。分为下�
 2、是BeanDefintion的载入
 
 3、向IOC容器注册这些BeanDefinition的过程
+
+
+
+```java
+@Override
+	public void refresh() throws BeansException, IllegalStateException {
+		synchronized (this.startupShutdownMonitor) {
+			// Prepare this context for refreshing.
+			prepareRefresh();
+
+			// Tell the subclass to refresh the internal bean factory.
+			ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+
+			// Prepare the bean factory for use in this context.
+			prepareBeanFactory(beanFactory);
+
+			try {
+				// Allows post-processing of the bean factory in context subclasses.
+				postProcessBeanFactory(beanFactory);
+
+				// Invoke factory processors registered as beans in the context.
+				invokeBeanFactoryPostProcessors(beanFactory);
+
+				// Register bean processors that intercept bean creation.
+				registerBeanPostProcessors(beanFactory);
+
+				// Initialize message source for this context.
+				initMessageSource();
+
+				// Initialize event multicaster for this context.
+				initApplicationEventMulticaster();
+
+				// Initialize other special beans in specific context subclasses.
+				onRefresh();
+
+				// Check for listener beans and register them.
+				registerListeners();
+
+				// Instantiate all remaining (non-lazy-init) singletons.
+				finishBeanFactoryInitialization(beanFactory);
+
+				// Last step: publish corresponding event.
+				finishRefresh();
+			}
+
+			catch (BeansException ex) {
+				if (logger.isWarnEnabled()) {
+					logger.warn("Exception encountered during context initialization - " +
+							"cancelling refresh attempt: " + ex);
+				}
+
+				// Destroy already created singletons to avoid dangling resources.
+				destroyBeans();
+
+				// Reset 'active' flag.
+				cancelRefresh(ex);
+
+				// Propagate exception to caller.
+				throw ex;
+			}
+
+			finally {
+				// Reset common introspection caches in Spring's core, since we
+				// might not ever need metadata for singleton beans anymore...
+				resetCommonCaches();
+			}
+		}
+	}
+```
+
+
 
 
 
@@ -1935,7 +2844,14 @@ public AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException 
 
 
 
+### 事务
 
+传播行为：指的就是当一个事务方法被另一个事务方法调用时，这个事务方法应该如何进行。 
+例如：methodA事务方法调用methodB事务方法时，methodB是继续在调用者methodA的事务中运行呢，还是为自己开启一个新事务运行，这就是由methodB的事务传播行为决定的。
+
+
+
+![这里写图片描述](java.assets/20170420212829825.png)
 
 ### 循环依赖
 
@@ -1957,7 +2873,640 @@ public AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException 
 
 
 
-## springboot
+
+
+## Springmvc
+
+### 工作流程
+
+![1641953226044](java.assets/1641953226044.png)
+
+
+
+### springmvc响应方式
+
+1. 页面跳转
+   1. 直接返回字符串
+   2. 通过ModelAndView对象返回
+2. 回写数据
+   1. 直接返回字符串
+   2. 返回对象或集合
+
+springboot前后端分离后，返回的一般是json字符串
+
+
+
+@**ResponseBody**注解告知mvc框架不进行师徒跳转，直接进行数据相应
+
+
+
+<mvc:annotation-driven>自动加载处理器映射器和处理器社佩奇，并且底层继承了jackson对对象和集合进行json字符串转换
+
+
+
+### springmvc获得请求数据
+
+#### 获得请求参数
+
+- 基本数据类型
+  - 参数名与请求参数名一致，会自动映射匹配
+- pojo类型
+- 数组类型
+- 集合类型
+  - 当使用ajax提交时候，可以指定contentype为json形式，在方法参数位置使用**@RequestBody**可以直接接受集合数据而无需使用pojo进行包装
+
+#### 占位符绑定
+
+地址/user/1中的1就是要获得的请求参数，可以使用占位符绑定来获得，如/user/{id}，配合注解**@PathVariable**
+
+```java
+@RequestMapping(value ="/user/{id}")
+    @ResponseBody
+    public void userid(@PathVariable("id")int id){
+        System.out.println(id);
+    }
+```
+
+
+
+
+
+
+
+### 静态资源访问控制
+
+```java
+//开启静态资源访问
+<mvc:resources mapping="/js/**" location="/js/" />
+//或者使用，如果找不到就是用tomcat来寻找资源
+<mvc:default-servlet-handler/>
+```
+
+
+
+### 拦截器
+
+类似于Servlet的过滤器Fiter，用于对处理器进行预处理和后处理
+
+将拦截器按成顺序结成链，称为拦截器链，也是AOP思想的体现，netty也应用了
+
+通过自定义实现拦截器可以做身份验证和权限验证
+
+
+
+![1642034961503](java.assets/1642034961503.png)
+
+
+
+接口代码如下
+
+```java
+public interface HandlerInterceptor {
+    //在请求处理之前
+    boolean preHandle(HttpServletRequest var1, HttpServletResponse var2, Object var3) throws Exception;
+
+    //在视图渲染返回前
+    void postHandle(HttpServletRequest var1, HttpServletResponse var2, Object var3, ModelAndView var4) throws Exception;
+
+    //请求结束之后
+    void afterCompletion(HttpServletRequest var1, HttpServletResponse var2, Object var3, Exception var4) throws Exception;
+}
+```
+
+
+
+### 异常处理
+
+异常处理交给springmvc的异常处理器统一处理，而不是在业务层代码里处理异常，起到解耦的作用
+
+![1642036329183](java.assets/1642036329183.png)
+
+
+
+
+
+## Mybatis
+
+原始jdbc存在的问题：
+
+1. 数据库创建连接、释放连接频繁造成资源浪费从而影响系统性能
+2. sql语句在代码中硬编码，造成代码不宜维护
+3. 查询等操作，需要手动封装数据
+
+
+
+解决方案：
+
+1. 使用数据库连接池来管理资源
+2. 将sql语句抽取出来放到xml文件中
+3. 使用反射等底层技术，自动将实体表与数据库表对应属性和字段映射
+
+
+
+**mybatis**就是上面解决方案的一个实现，让开发者只关注sql语句本身
+
+
+
+### 开发步骤
+
+1. 创建数据表
+2. 创建实体类
+3. 编写映射文件Mapper.xml
+4. 编写配置文件SqlMapConfig.xml文件
+
+
+
+#### 映射文件描述
+
+namespace和id组成了唯一标识
+
+![1642051109836](java.assets/1642051109836.png)
+
+映射文件关于增删改查的配置如下
+
+```xml
+<mapper namespace="accountMapper">
+    <select id="findAll" resultType="pojo.Account">
+        select * from account
+    </select>
+
+    <select id="save" parameterType="pojo.Account">
+        insert into account values(#{id},#{name},#{money})
+    </select>
+
+    <update id="updateById" parameterType="pojo.Account">
+        update account set money=#{money} where id=#{id}
+    </update>
+
+    <delete id="deleteById" parameterType="pojo.Account">
+        delete from account where id=#{id}
+    </delete>
+</mapper>
+```
+
+
+
+#### 核心配置文件
+
+下面是最简单的sqlMapconfig文件配置
+
+```xml
+<configuration>
+    <!--数据源环境-->
+    <environments default="dev">
+        <!--一个开发环境-->
+        <environment id="dev">
+            <transactionManager type="JDBC"></transactionManager>
+            <dataSource type="POOLED">
+                <property name="driver" value="com.mysql.jdbc.Driver"/>
+                <property name="url" value="jdbc:mysql://localhost:3306/test"/>
+                <property name="username" value="root"/>
+                <property name="password" value="root"/>
+            </dataSource>
+        </environment>
+    </environments>
+
+    <!--加载映射文件-->
+    <mappers>
+        <mapper resource="mapper/AccountMapper.xml"/>
+    </mappers>
+</configuration>
+```
+
+常用配置
+
+1、**properties**标签，可以加载外部文件
+
+```xml
+<properties resource="jdbc.properties"></properties>
+```
+
+2、typeAliases设置类型别名，之后再mapper中直接使用别名
+
+```xml
+<typeAliases>
+        <typeAlias type="pojo.Account" alias="account"></typeAlias>
+    </typeAliases>
+```
+
+3、mapper标签，加载映射配置
+
+```xml
+<mappers>
+        <mapper resource="mapper/AccountMapper.xml"/>
+    </mappers>
+```
+
+
+
+### dao层实现
+
+**mybatis**使用动态代理实现dao层的开发，接口开发方式只需要程序员自己提供Mapper接口，会自动实现mapper的实现类
+
+规范如下：
+
+1. Mapper.xml中的namespace需要与mapper接口的全限定名相同
+2. mapper接口方法名需要与mapper.xml文件每个标签的id相同
+3. mapper接口的输入输出需要与mapper.xml的parametertype和resultype相同
+
+![1642053247340](java.assets/1642053247340.png)
+
+### 动态sql
+
+#### if和where标签
+
+下面使用if标签来判断该字段是否为空，不为空就添加该sql语句，if标签与where标签配合来生成，该语句会判断单个字段或多个字段的联合查询
+
+```xml
+    <select id="selectByCondition" resultType="user" parameterType="user">
+        select * from user
+        <where>
+            <if test="username!=null">
+                and username=#{username}
+            </if>
+            <if test="id!=null">
+                and id=#{id}
+            </if>
+        </where>
+    </select>
+```
+
+
+
+#### foreach标签
+
+in语句在mybatis中用foreach标签来代替
+
+```xml
+ <select id="selectByIds" resultType="user" parameterType="list">
+        select * from user
+        <where>
+          <foreach collection="list" open="id in(" close=")" separator="," item="id">
+              #{id}
+          </foreach>
+        </where>
+    </select>
+```
+
+
+
+#### sql和include标签
+
+因为很多sql语句是重复的，可以通过抽取来复用，这样以后修改的时候也只需要修改一处就可以了
+
+```xml
+<!--定义sql语句，复用-->
+<sql id="selectUser">select * from user</sql>
+
+ <select id="selectByIds" resultType="user" parameterType="list">
+     <!--引用上面sql语句-->
+        <include refid="selectUser"/>
+        <where>
+          <foreach collection="list" open="id in(" close=")" separator="," item="id">
+              #{id}
+          </foreach>
+        </where>
+    </select>
+```
+
+
+
+### 插件
+
+**mybatis**可以使用第三方插件来对功能进行扩展，如添加分页助手**pagehelper**将分页操作进行封装。
+
+1. 导入**pagehelper**的坐标
+
+   1. ```xml
+      <dependency>
+                  <groupId>com.github.pagehelper</groupId>
+                  <artifactId>pagehelper</artifactId>
+                  <version>4.2.0</version>
+              </dependency>
+              <dependency>
+                  <groupId>com.github.jsqlparser</groupId>
+                  <artifactId>jsqlparser</artifactId>
+                  <version>0.9.1</version>
+              </dependency>
+      ```
+
+      
+
+2. 在核心配置文件中配置插件，设置拦截器
+
+   1. ```xml
+      <plugins>
+              <plugin interceptor="com.github.pagehelper.PageHelper">
+                  <property name="dialect" value="mysql"></property>
+              </plugin>
+          </plugins>
+      ```
+
+3. 测试，通过在查询前添加如下代码即可实现分页
+
+   1. ```java
+      PageHelper.startPage(1,4);
+      ```
+
+   2. 还可以通过pageinfo来获得当前的页数、是不是最后一页等分页信息
+
+      ```java
+       //获得与分页相关的参数
+              PageInfo<User> userPageInfo = new PageInfo<User>(users);
+              int pageNum = userPageInfo.getPageNum();
+              int pageSize = userPageInfo.getPageSize();
+              System.out.println(pageNum + " " + pageSize);
+      ```
+
+      
+
+### 查询
+
+#### 一对多查询
+
+一个订单对应一个用户，需要在订单pojo里添加user对象，在orderMap里使用resultmap标签和assocation标签
+
+```java
+public class Order {
+    private int id;
+    private int uid;
+    private String item;
+    private User user;
+}
+```
+
+select标签返回不用resultType而使用resultMap
+
+```xml
+<resultMap id="orderMap" type="order">
+        <id column="id" property="id"/>
+        <result column="uid" property="uid"/>
+        <result column="item" property="item"/>
+        <association property="user" javaType="user">
+            <id column="uid" property="id"/>
+            <result column="username" property="username"/>
+            <result column="passwd" property="passwd"/>
+            <result column="birthday" property="birthday"/>
+        </association>
+    </resultMap>
+    <select id="selectAll" resultMap="orderMap">
+        select * from ord o left join user u on o.uid=u.id
+    </select>
+```
+
+
+
+#### 对对多查询
+
+一个用户对应多个订单，因为是多个，所以用resultmap标签和collection标签配合
+
+```java
+public class User {
+    private int id;
+    private String username;
+    private String passwd;
+    private Date birthday;
+    private List<Order> orders;
+}
+```
+
+```xml
+ <resultMap id="userMap" type="user">
+        <id column="id" property="id"/>
+        <result column="username" property="username"/>
+        <result column="passwd" property="passwd"/>
+        <result column="birthday" property="birthday"/>
+        <collection property="orders" ofType="order">
+            <id column="oid" property="id"/>
+            <result column="item" property="item"/>
+            <result column="uid" property="uid"/>
+        </collection>
+    </resultMap>
+```
+
+
+
+## Springboot
+
+- parent：定义了很多的坐标版本号，做了依赖管理，已达到减轻依赖冲突的目的，后续用户添加依赖不需要指定版本号
+- starter：定义了当前项目所需要的依赖坐标，已达到减少依赖配置的目的
+
+
+
+内嵌了tomcat，把tomcat当成对象管理放在spring容器中	
+
+
+
+
+
+### 配置文件读取
+
+通过ConfigurationProperties注解配上前缀可以把配置文件中与该前缀相关的配置封装到java对象中，注意对象属性名要与配置文件中一样
+
+并且需要把java对象注册到spring容器中
+
+![1642486103150](java.assets/1642486103150.png)
+
+该注解也可以用来配置第三方bean，如druid的datasource
+
+
+
+### 整合第三方技术
+
+1. 导入对应的starter
+2. 根据第三方技术配置文件
+
+下面配置mysql、mybatis和druid的导入
+
+导入三方的pom包后，根据druid特别的配置名称来配置
+
+```yml
+spring:
+  datasource:
+    druid:
+      driver-class-name: com.mysql.jdbc.Driver
+      url: jdbc:mysql://localhost:3306/test
+      username: root
+      password: root
+```
+
+
+
+
+
+
+
+### 日志
+
+```xml
+<dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-logging</artifactId>
+            <version>1.5.2.RELEASE</version>
+        </dependency>
+```
+
+![1640843034024](java.assets/1640843034024.png)
+
+总结
+
+1. 底层使用logback作为日志实现
+2. 使用slf4j作为日志门面
+
+
+
+### 打包
+
+使用springboot提供的maven插件可以将工程打包成可执行的jar包
+
+```xml
+<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+					</plugin>
+		</plugins>
+	</build>
+```
+
+springboot会把运行该文件所需要的jar包都打包在里面，并且会在META-INF中添加额外的如下内容
+
+```xml
+//springboot的主类
+Start-Class: com.mybatis.demo.DemoApplication
+Spring-Boot-Classes: BOOT-INF/classes/
+Spring-Boot-Lib: BOOT-INF/lib/
+Build-Jdk-Spec: 1.8
+Spring-Boot-Version: 2.6.2
+Created-By: Maven Jar Plugin 3.2.0
+//springboot启动类，他回去运行主类
+Main-Class: org.springframework.boot.loader.JarLauncher
+```
+
+
+
+### 类型校验
+
+导入pom包，validation的接口包和hibernate实现包
+
+```xml
+<dependency>
+			<groupId>javax.validation</groupId>
+			<artifactId>validation-api</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.hibernate.validator</groupId>
+			<artifactId>hibernate-validator</artifactId>
+		</dependency>
+```
+
+创建javabean，添加@validated注解开启属性校验
+
+使用@Max最大值限制等注解来限制属性
+
+```java
+@Data
+@Component
+@ConfigurationProperties("servers")
+//开启属性校验
+@Validated
+public class ServerConfig {
+    @Max(value = 4,message = "最大值不能超过4")
+    private int port;
+    @DurationUnit(ChronoUnit.HOURS)
+    private Duration serverTime;
+    @DataSizeUnit(DataUnit.BYTES)
+    private DataSize datasize;
+}
+```
+
+
+
+## Maven
+
+### 是什么？
+
+- 本质是一个项目管理工具，将项目开发和管理过程抽形成了项目对象模型(POM)
+- POM（Project Object Model）
+
+![1640786650622](java.assets/1640786650622.png)
+
+
+
+### 仓库
+
+仓库用于存储jar包的
+
+**分类**
+
+- 本地仓库：自己电脑上的仓库
+- 远程仓库：非本电脑的仓库
+  - 中央仓库：maven团队自己维护的仓库
+  - 私服：公司范围内维护的仓库，从中央仓库获取资源
+
+
+
+**私服作用**：
+
+- 仅对内部开放，对外部关闭
+- 保存自主研发的jar包
+
+![1640786903393](java.assets/1640786903393.png)
+
+
+
+### 坐标
+
+**maven中定位资源的位置**
+
+maven坐标组成
+
+- groupId：定义当前的隶属组织名称
+- artifactId：定义当前maven项目名称
+- version：当前版本号
+
+
+
+### 命令
+
+- mvn compile 编译
+- mvn clean 清理
+- mvn test 测试
+- mvn package 打包
+- mvn install 安装到本地仓库
+
+
+
+### 依赖
+
+- 依赖的jar默认情况可以在任何地方使用，可以用个scope标签设定其范围
+
+- 作用范围
+
+  - main主程序范围有效
+  - test测试程序范围内有效
+  - package是否参与打包
+
+  ![1640833131428](java.assets/1640833131428.png)
+
+
+
+### 生命周期与插件
+
+生命周期分为三个：
+
+- clean：清理工作
+- default：核心工作例如编译、测试、打包和部署
+- site：产生报告、发布站点
+
+
+
+插件与生命周期绑定，执行对应插件就执行到对应生命周期
+
+
+
+
 
 
 
@@ -2584,4 +4133,962 @@ public class DotaActionDecorator extends NewAction{
 ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
 ObjectOutputStream objectOutputStream = new ObjectOutputStream(byteArrayOutputStream);
 ```
+
+
+
+### 门面模式
+
+也成为了外观模式，对外提供了简单的接口调用，省略了复杂的细节（包含多个接口的调用）
+
+将复杂的接口简单化，减少了客户端与接口的耦合，可能产生大量的中间类对系统增加了复杂度
+
+![img](java.assets/v2-07f5d83972519c9540e3bf0af7460dfb_b.jpg)
+
+```java
+public class ButtonOpen {
+    public static void main(String[] args) {
+        new Cpu().start();
+        new Disk().start();
+        new Driver().start();
+    }
+}
+class Cpu{
+    public void start(){
+        System.out.println("CPU开机了");
+    }
+}
+class Disk{
+    public void start(){
+        System.out.println("磁盘启动了");
+    }
+}
+class Driver{
+    public void start(){
+        System.out.println("驱动启动了");
+    }
+}
+```
+
+
+
+==日志系统采用了门面模式==
+
+下面的slf4j就是门面模式
+
+![1640694214338](java.assets/1640694214338.png)
+
+slf4j如何决定使用哪个日志框架呢？
+
+- 如果要使用log4j就是需要**slf4j**的包和**log4j**的包，在包括**slf4j-log4j**的适配包
+- log4j2配合需要导入适配包**log4j-slf4j-impl****.jar**和log4j2的**log4j-api.jar**、**log4j-core.jar。
+- logback只需要导入**logback-classic**和**logback-core.jar**即可，不需要适配包。
+
+![img](java.assets/v2-df52f3ef42e68c48f68c3743739ca9f7_b.jpg)
+
+
+
+那么什么是适配包为什么logback不需要适配包呢？
+
+如下为适配包（==适配包实现了slf4j-api下的SPI接口==），最重要的类叫StaticLoggerBinder
+
+![1640694816151](java.assets/1640694816151.png)
+
+slf4j会在该路径下找到该类，因为log4j和log4j2原生没有，所以需要适配包写这个类完成适配
+
+```
+private static String STATIC_LOGGER_BINDER_PATH = "org/slf4j/impl/StaticLoggerBinder.class";
+```
+
+slf4j在创建LoggerFactory时候就会让StaticLoggerBinder来返回工厂也就是log4j的工厂
+
+这里可以看到从StaticLoggerBinder中获得到的工厂是下面这个工厂
+
+==private final ILoggerFactory loggerFactory = new Log4jLoggerFactory()==
+
+```java
+public final class StaticLoggerBinder implements LoggerFactoryBinder {
+    public static String REQUESTED_API_VERSION = "1.6";
+    private static final String LOGGER_FACTORY_CLASS_STR = Log4jLoggerFactory.class.getName();
+    private static final StaticLoggerBinder SINGLETON = new StaticLoggerBinder();
+    private final ILoggerFactory loggerFactory = new Log4jLoggerFactory();
+
+    private StaticLoggerBinder() {
+    }
+
+    public static StaticLoggerBinder getSingleton() {
+        return SINGLETON;
+    }
+
+    public ILoggerFactory getLoggerFactory() {
+        return this.loggerFactory;
+    }
+
+    public String getLoggerFactoryClassStr() {
+        return LOGGER_FACTORY_CLASS_STR;
+    }
+}
+```
+
+==至于logback为什么==是因为logback在slf4j后面出来，已经自带了StaticLoggerBinder
+
+
+
+### 桥接模式
+
+通过桥接模式把两个相互组合的类型分离出来，其核心事项就是在A类中包含有B类接口，通过构造函数传递B类的实现，==这个B类就是桥==
+
+定义了抽象的pay代表渠道，和接口paymode支付模式，把paymode作为参数传递个pay
+
+```java
+public abstract class Pay {
+    protected PayMode payMode;
+
+    public Pay(PayMode payMode) {
+        this.payMode = payMode;
+    }
+
+    public abstract void pay();
+}
+public interface PayMode {
+    public void check();
+}
+```
+
+下面是相应实现
+
+```java
+public class WxPay extends Pay {
+    public WxPay(PayMode payMode) {
+        super(payMode);
+    }
+
+    public void pay() {
+        System.out.println("微信支付");
+        payMode.check();
+    }
+}
+public class ZfPay extends Pay{
+    public ZfPay(PayMode payMode) {
+        super(payMode);
+    }
+
+    public void pay() {
+        System.out.println("支付宝支付");
+        payMode.check();
+    }
+}
+//支付模式
+public class FingerPayMode implements PayMode {
+    public void check() {
+        System.out.println("指纹识别支付");
+    }
+}
+public class FacePayMode implements PayMode{
+    public void check() {
+        System.out.println("人脸识别支付");
+    }
+}
+
+//输出
+ @Test
+    public void brige(){
+        Pay pay = new WxPay(new FingerPayMode());
+        pay.pay();
+    }
+//微信支付
+//指纹识别支付
+```
+
+
+
+jdbc就是使用了桥接模式，分为了Driver接口和Connection接口
+
+
+
+
+
+### 区别
+
+**桥接模式**：目的是将接口部分与实现部分分离，从而让他们容易也相对独立的加以改变。比如组合接口和抽象，应对有两个维度的变化
+
+**装饰模式：**装饰者模式在不改变原始类接口的情况下，对原始类功能进行增强，并且支持多个装饰器的嵌套使用。
+
+**适配器模式：**适配器模式是一种事后的补救策略。适配器提供跟原始类不同的接口
+
+
+
+
+
+
+
+## JVM
+
+特点：
+
+- 一次编译，到处运行
+- 自动内存管理
+- 自动垃圾回收功能
+
+
+
+jvm虚拟机基于栈的指令集架构，优点在于跨平台性、指令集小，指令集多，缺点是执行性能低于寄存器
+
+
+
+
+
+总的结构图
+
+![1645413903495](java.assets/1645413903495.png)
+
+
+
+### 类加载器
+
+主要把class文件加载到内存中，供后续执行引擎执行
+
+![1645413936607](java.assets/1645413936607.png)
+
+#### 加载阶段
+
+1. 通过类的全限定名来获取定义此类的二进制流
+2. 将字节流所代表的静态存储结构转换为方法区的运行时数据结构
+3. 在内存中生成代表该类的class对象，作为方法区这个类的各种数据入口
+
+
+
+
+
+#### 链接
+
+1. 验证
+   1. 母的确保class字节流包含信息符合虚拟机要求
+2. 准备
+   1. 为类变量初始化赋值为默认值，如0，这里如果static被final修辞段的话，在编译时候就被分配了，准备阶段显示初始化
+   2. 类变量被分配在方法区，实例变量会随着对象一起分配到堆
+3. 解析
+   1. 将常量池内的符号医用转换为直接引用
+
+
+
+#### 初始化
+
+
+
+
+
+#### 自带的加载器
+
+##### 启动类加载器
+
+- 这个类加载使用C/C++实现，嵌套在jvm内部
+- 并不继承ClassLoader类
+- 只加载少部分安全的类
+
+##### 扩展类加载器
+
+- 加载ext目录下的扩展类
+
+##### 应用程序类加载器
+
+- 负责加载环境变量classpath下的类库
+- 是程序的默认类加载器
+
+
+
+#### 双亲委派机制
+
+当一个类需要被加载时候，子类加载器会传给上一层加载器，上一层也传给其父类直到最上层加载器，最上层加载器查看自己能否加载，能则加载，不能则交给下层加载。
+
+![1645428281379](java.assets/1645428281379.png)
+
+
+
+
+
+### 运行时数据区
+
+
+
+![1645532879423](java.assets/1645532879423.png)
+
+各部分是否共享和有什么异常
+
+![1645681366792](java.assets/1645681366792.png)
+
+
+
+#### 虚拟机栈
+
+> 栈是运行时的单位，堆是存储的单位
+
+每个线程在创建时候都会有对应的虚拟机栈，是线程私有的
+
+
+
+栈不存在垃圾回收问题，但存在栈溢出问题
+
+
+
+
+
+##### 栈帧
+
+线程上每个方法对应栈帧，栈帧是一个内存区域，维系着方法执行过程中的各种数据信息
+
+![1645535209865](java.assets/1645535209865.png)
+
+一个栈帧内部包括了：
+
+- 局部变量表
+  - 用于存储方法参数和局部变量，==不存在数据安全问题==
+  - 局部变量表的最基本单位为slot，long和double占用两个slot，其他类型占用1个slot，==this引用会放在第一个位置==
+  - 所需的容量在编译器确定
+- 操作数栈
+  - 主要用于保存计算的中间结果，同时为计算过程变量提供临时存储空间
+  - 在编译器确定深度
+- 动态链接
+  - 将符号引用转换为直接引用
+  - 例子：  下面左边的就是符号引用，右边人能看懂的是直接引用
+  - #26 = Utf8               com/example/jvm/StackTest
+- 方法返回地址
+
+
+
+##### 符号引用有三类
+
+1. 类和接口的全限定名
+2. 字段的名称和描述符
+3. 方法的名称和描述符
+
+
+
+##### 方法的调用
+
+- 静态链接：编译期就把符号引用转换为直接引用
+- 动态链接：运行期才把符号引用转换为直接引用
+
+
+
+#### 堆
+
+堆中对每个线程都有一个独有的缓冲区叫**TLAB**
+
+堆是GC垃圾回收的重点区域
+
+
+
+##### 内存细分
+
+- java7之前是新生区+老年区和永久区
+- java8之后是新生区+老年区+元空间
+
+永久代和元空间实际上又是==方法区的实现方式==
+
+
+
+> -Xms用来设置堆空间的初始内存大小
+
+> -Xmx用来设置堆空间的最大大小
+
+
+
+默认情况新生代：老年代为1:2
+
+eden和s0/s1的比例是8:1:1
+
+![1645622374534](java.assets/1645622374534.png)
+
+###### 新生代对象分配与回收
+
+**MinorGC**：用来处理eden已满的情况。
+
+当对象在MinorGC存活下来后，放到s0或s1中，并标记上年龄，同时s0中的对象如果存活放在s1中，增加年龄，之后s1又放到s0中，到对象年龄超过15后，就放到老年代区。
+
+==会引发STW(stop the world)暂停用户线程，等垃圾回收结束后，用户线程才恢复==
+
+注意：垃圾回收常在新生代，少在老年代，几乎不再元空间收集。
+
+**MajorGC**：用来处理老年代的对象
+
+比MinorGC慢
+
+**FullGC**：收集整个java堆和方法区的垃圾收集
+
+触发情况
+
+1. ​	调用System.gc()
+2.  老年代空间不足
+3. 方法区空间不足
+4. 经过minorgc进入老年代的对象大于其老年代可用内存
+5. surviror区相互复制时候，对象大于s区后，要放到老年代，但老年代内存不足
+
+
+
+![1645672581741](java.assets/1645672581741.png)
+
+###### TLAB
+
+由于堆是线程共享区域，并发环境下在堆中划分内存空间是线程不安全的，如果加锁，会影响分配速度
+
+提出了TLAB来解决这个问题
+
+每个线程都有私有的缓存区域，该区域是在==eden区域内==，默认情况下仅占1%
+
+ ![1645673074074](java.assets/1645673074074.png)
+
+###### 堆空间参数
+
+-Xms用来设置堆空间的初始内存大小
+
+-Xmx用来设置堆空间的最大大小
+
+-Xmn新生代的大小
+
+-XX:NewRation新生代与老年代比例
+
+-XX:SurvivorRation新生代的Eden和s0/s1比例
+
+-XX:+PrintGCDetails输出详细gc日志
+
+-XX:MaxTenuringThreshold：设置新生代垃圾最大年龄
+
+-XX:HandlePromotionFailure：是否设置空间分配担保
+	该参数在jd7后没有用了，只要老年代的连续空间大于新生代对象总大小或者历次晋升的平均大小就会进行MinorGC
+
+
+
+##### 逃逸分析
+
+随着JIT编译器的发展和逃逸技术的发展，堆不再是唯一分配对象的位置
+
+==如果经过逃逸分析发现，一个对象没有逃离出方法的话，就可能被优化为栈上分配，对象被分解为标量存在栈上==
+
+
+
+逃逸分析基本行为就是分析对象动态作用域：
+
+> 注意判断new的对象实体有没有被外部引用
+
+- 当一个对象在方法中被定义后，对象只在方法内部使用，则认为没有发生逃逸
+- 当一个对象在方法被定义后，他被外部方法所引用，则认为发生逃逸，例如作为调用参数被传递到其他方法中
+
+
+
+逃逸分析优化方式：
+
+1. 栈上分配
+2. 同步消除：JIT判断一个同步块如果只有一个线程访问，那么 就消除同步锁
+3. 标量替换：如果一个对象不被外界访问，那么就会把对象分解为成员变量作为标量，标量是java中的最小单位
+
+```java
+class Point{
+        int x;
+        int y;
+    }
+void haha(){
+        Point point = new Point();
+        point.x = 1;
+        point.y = 2;
+        //标量替换为下面的
+        int x = 1;
+        int y = 2;
+    }
+```
+
+
+
+#### 方法区
+
+该区逻辑上属于堆得一部分，具体实现上独立于堆
+
+##### 栈堆方法区的相互关系
+
+![1645681879883](java.assets/1645681879883.png)
+
+![1645681884541](java.assets/1645681884541.png)
+
+
+
+##### 方法区的演进
+
+- java7之前是新生区+老年区和永久区
+- java8之后是新生区+老年区+元空间
+
+永久代和元空间实际上又是==方法区的实现方式==
+
+元空间不再虚拟机设置的内存中，而是使用本地内存
+
+
+
+##### 内部结构
+
+方法区主要存储类信息、常量、静态变量、JIT的代码缓存
+
+![1645684649892](java.assets/1645684649892.png)
+
+常量池存了字面量，类型、字段、方法的符号引用
+
+常量池通过类加载器放到运行时数据区后，称为==运行时常量池==
+
+​	与常量池不同，运行时常量池存的不再是符号引用而是实际的地址
+
+
+
+在jdk7后，静态变量和字符串常量池放在了堆中，如下图
+
+![1645689056509](java.assets/1645689056509.png)
+
+###### 为什么要改成元空间？
+
+1. 为永久代设置空间大小很难，因为各种第三方jar用了大量的动态反射技术，会产生很多不确定的类，元空间使用本地内存
+2. 因为sun收购了jrocket虚拟机，要进行兼容
+
+
+
+### 对象的实例化与内存布局
+
+#### 创建对象的方式
+
+1. new对象
+2. class的newInstance()只能调用空参
+3. Constructor的newInstance()
+4. 调用clone（），类实现Cloneable接口
+5. 反序列化：从文件网络中获取对象二进制流
+6. 第三方库
+
+
+
+#### 创建对象的步骤
+
+1. 判断对象对应类是否加载、链接、初始化
+2. 为对象分配内存
+   1. 如果内存规整：用**指针碰撞**（就是用指针把空间一分为二，当分配内存后，指针移动）
+   2. 如果内存不规整：维护**空闲列表**保存没有使用的内存
+3. 处理并发安全问题
+   1. 采用CAS保证更新
+   2. 为线程分配TLAB
+4. 初始化分配到的空间（给默认值）
+5. 设置对象的对象头
+6. 使用init方法进行显示初始化
+
+
+
+
+
+#### 对象的内存布局
+
+以下面代码创建的对象为例
+
+```java
+public class StackTest {
+    public static void main(String[] args) throws InterruptedException {
+        Customer customer = new Customer();
+    }
+
+}
+class Customer{
+    private int id;
+    private String name;
+    private Acccount account;
+
+    public Customer(){
+        id = 1001;
+        name = "匿名客户";
+        account = new Acccount();
+    }
+}
+class Acccount{}
+```
+
+可以画出下面的示例图来展示对象在虚拟机中的内存布局
+
+![1645759500854](java.assets/1645759500854.png)
+
+
+
+#### 对象的访问方式
+
+两种
+
+- 句柄访问
+  - 该方法如果发生垃圾回收实例数据地址改变，不会改变栈中指向堆得指针，只需要改变句柄池指针
+  - ![1645759991060](java.assets/1645759991060.png)
+- 直接指针
+  - hotspot用的是这种方式
+  - 该方法访问更快
+  - ![1645760006200](java.assets/1645760006200.png)
+
+
+
+### 执行引擎
+
+将字节码指令解释/编译为对应平台上的本地机器指令
+
+执行引擎同时拥有**解释器**和**JIT编译器**
+
+
+
+解释器：当jvm启动时根据规范对字节码采用逐行解释的方法，然后直接执行
+
+JIT编译器：将虚拟机源代码直接翻译为本地机器平台的机器语言
+
+
+
+### 字符串
+
+#### 字符串拼接
+
+- 常量与常量的拼接结果在常量池，原理是编译期优化
+
+  - ```
+    final String s1 = "a";
+    final String s2 = "b";
+    String s3 = "ab";
+    String s = s1+s2;
+    s==s3 //true
+    原理在于s1和s2现在不是变量而是常量。
+    ```
+
+    
+
+- 常量池不会存在相同的常量
+
+- 只要其中一个是变量，结果就在堆中（相当于new了对象），变量拼接的原理是StringBuilder
+
+  - ```
+    String s = s1+s2
+    等价于创建一个StringBuilder对象，并调用其append方法
+    ```
+
+- 如果拼接的结果调用了intern方法，则主动将常量池没有的字符串放入池中，并返回此对象地址
+
+
+
+
+
+通过StringBuilder的append方法的拼接要优于String自身的拼接操作，原因在于：
+
+1. String自身拼接会不断创建StringBuilder对象和String对象
+2. 创建过多的对象可能会造成频繁gc
+
+对上面还可以改进，在实际开发中，可以在其构造函数中规定一个最大值，可以使得其byte数组不会因为扩容不断复制
+
+
+
+#### intern()
+
+intern确保常量池的字符只有一份，这样可以节约空间，加快字符串操作的执行速度，非常重要。
+
+如果用的是new String()后面最好加上intern
+
+
+
+##### 面试题
+
+1、new  String("ab")会创建几个对象？
+
+​	答：一个在是new在堆空间创建的对象，另外一个在常量池中的对象
+
+2、new String("a")+new String("b")会创建几个对象？
+
+​	答：一共5个，new了一个StringBuilder对象，new了两个String对象，字符串常量池添加了a和b常量的对象，==其实在Stringbuilder返回的toString方法中又创建了一个string对象==，同时注意字符串常量池中不会有ab
+
+
+
+3、
+
+```java
+String a = new String("a")+new String("b");//a接受的是new String("ab")对象，并且没有在常量池生成ab
+a.intern();//在常量池生成对象   注意在jdk7以后，因为字符串常量池搬到了堆中，因为在上面已经在堆中生成了ab对象，那么就不会再创建ab对象了，而是引用了ab对象
+String b = "ab";
+System.out.println(a==b);//true  ，所以其实两个指向的是一个位置
+```
+
+
+
+### 垃圾回收
+
+垃圾：运行程序中没有任何指针指向该对象
+
+
+
+#### 垃圾回收算法
+
+##### 标记阶段
+
+识别哪些是垃圾
+
+
+
+###### 引用计数法
+
+每个对象保存一个整形的引用计数器属性，如果引用计数器为0，该对象可进行回收
+
+优点：实现简单，易于判断
+
+缺点：需要每个对象单独存储计数器；无法处理循环引用
+
+
+
+###### 可达性分析算法
+
+java采用的标记算法，可以解决循环引用
+
+只要没有被GC ROOTS直接或间接连接的对象就是垃圾
+
+![1645874871305](java.assets/1645874871305.png)
+
+GC ROOTS的种类：
+
+1. 虚拟机栈中引用的对象
+2. 本地方法栈引用的对象
+3. 静态变量引用的对象
+4. 字符串常量池引用
+5. 被同步锁持有的对象
+
+
+
+##### 清除阶段
+
+清除垃圾
+
+###### 标记清除
+
+​	标记的是可达对象，然后遍历堆清除掉没有被标记的对象 
+
+![1645876393919](java.assets/1645876393919.png)
+
+​	缺点：
+
+1. 效率不高
+2. 进行gc需要停止整个应用程序
+3. 容易产生内存碎片，需要额外维护一个空闲列表
+
+
+
+###### 标记复制
+
+​	将内存空间分为两块，每次只使用其中一块，垃圾回收时候把使用的一块的存活对象复制到另外一块空间。 
+
+​	实际上survivor区的s1和s2就是使用了该算法
+
+![1645876675071](java.assets/1645876675071.png)
+
+​	优点：
+
+1. 实现简单，运行高效
+2. 没有碎片
+
+
+
+​	缺点：
+
+1. 需要两倍的内存空间
+
+   
+
+###### 标记整理
+
+用于老年代的收集算法
+
+![1645876956109](java.assets/1645876956109.png)
+
+优点：
+
+1. 没有碎片，不需要空闲列表维护
+2. 消除了复制算法需要两倍内存的代价
+
+缺点：
+
+1. 效率低于复制算法
+2. 移动过程需要暂停用户程序
+3. 移动对象时候被其他对象引用，需要调整引用地址
+
+
+
+#### 内存泄露
+
+严格来说，只有对象不被程序用到，但gc又不会回收到他，最终会导致内存溢出
+
+
+
+举例：
+
+1. 单例模式
+   1. 单例模式生命周期长，如果持有其他引用，那么其他引用指向的对象就不会被回收，导致内存泄露
+2. 数据库连接、网络、IO没有关闭close，就会导致资源内存泄露
+
+
+
+#### 引用级别
+
+我们希望一类对象，在内存足够的时候保留在内存，如果内存不够，就被垃圾回收
+
+下面的引用强度依次减弱
+
+- 强引用：最常使用的
+- 软引用：内存溢出之前，在第二次收集时候，如果没有足够内存，才会回收
+- 弱引用：只能生存到下一次垃圾回收之前，只要垃圾回收就会被清除
+- 虚引用：该引用唯一目的是能在这个对象被垃圾收集时候收到系统通知
+
+
+
+##### 面试题
+
+用过weakhashmap吗？
+
+
+
+#### 垃圾收集器
+
+主要关注吞吐量和低延迟
+
+当前标准：在最大吞吐量优先的情况下，降低停止时间
+
+
+
+##### 经典垃圾回收器
+
+- 串行：Serial、Serial old
+- 并行：ParNew、Parallel Scavenge、Parallel Old
+- 并发：CMS、G1
+
+与垃圾分代之间的关系
+
+![1645970211252](java.assets/1645970211252.png)
+
+
+
+垃圾收集器的组合关系
+
+红虚线是jdk8之前的组合关系
+
+绿虚线是jdk14去除了
+
+==jdk8默认使用Parallel GC和Parallel Old GC==
+
+![1645970251943](java.assets/1645970251943.png)
+
+##### Serial回收器
+
+最老的回收期
+
+采用复制算法、串行回收和STW机制
+
+老年代使用 Serial Old回收器，采用标记整理算法
+
+
+
+优点：简单高效
+
+缺点：吞吐量低，延迟高
+
+
+
+##### ParNew
+
+处理新生代的回收器，运行与多cpu上
+
+在Serial基础上使用了并行的方式
+
+
+
+优点：相对Serial，吞吐量高
+
+
+
+##### Parallel
+
+并行、复制算法、吞吐量优先、自适应调节策略（自动内存分配）
+
+与Parallel old配合使用，old用来并行处理老年代，使用标记压缩算法
+
+
+
+##### CMS
+
+面试重点收集器
+
+1.5推出的第一款并发收集器，第一次实现了垃圾收集线程与用户线程同时工作
+
+特点是低延迟
+
+CMS采用标记清除算法
+
+
+
+工作原理
+
+- 初始标记：用户线程STW，仅仅标记GC ROOTS能直接关联到的对象，速度非常快
+- 并发标记：从GC ROOTS的直接关联对象遍历整个对象图
+- 重新标记：修正并发标记期间，用户线程继续运行导致标记产生变动的一部分对象的标记
+- 并发清除：并发清除死亡对象，释放内存
+
+![1646014676215](java.assets/1646014676215.png)
+
+
+
+缺点：
+
+- 产生内存碎片
+- 对CPU资源非常敏感，降低吞吐量
+- 无法处理在并发标记阶段产生新垃圾对象
+
+
+
+##### G1区域分代化
+
+![1646016632638](java.assets/1646016632638.png)
+
+官方给其目标是延迟可控的情况下获得尽可能高的吞吐量
+
+G1是分区算法，可以处理新生代和老年代
+
+
+
+使用不同的Region来处理eden、s0、s1和老年代，每次回收Region价值最高的，所以叫G1（Garbage first）
+
+==jdk9的默认回收器==
+
+
+
+优点：
+
+1. 同时兼顾并行与并发
+2. 分代收集，并且所有区域在物理上不要求连续
+3. Region使用复制算法，整体上是标记整理算法
+4. 限制停顿时间（G1只需要对部分区域进行回收）
+
+缺点：
+
+​	占用更多的内存空间
+
+
+
+使用场景：
+
+- 面向服务器端，大内存、多处理器
+- 用来替换掉CMS
+  - 超过一半的java堆被活动数据占用
+  - 对象分配频率变化很大
+  - GC停顿时间长（0.5-1秒）
+
+
+
+
+
+
+
+
+
+##### 口诀
+
+- 最小化使用内存和并行开销，用Serial
+- 最大化应用程序的吞吐量，用Parallel
+- 最小化GC的中断，用CMS
+
+![1646030865466](java.assets/1646030865466.png)
+
+
 
