@@ -14,8 +14,6 @@ redis是单线程+多路IO复用
 
 对应命令为set
 
-
-
 #### 底层
 
 采用简单动态字符串(SDS)，内部结构类似java的ArrayList

@@ -166,7 +166,7 @@ Serializable接口是序列化接口，何为序列化
 
 ==本质上Serializable只是一个标识，用户层面只需要implements就可以了，实际是告诉jvm来处理==
 
-java建议用户需要自己顶一个serialVersionUID变量在类中，当然自己不定义java也会默认给一个，但是默认的对class细节敏感
+java建议用户需要自己顶一个serialVersionUID变量在类中，当然自己不定义java也会默认给一个，但是默认的对class细节敏感，反序列化时候会比较两个类的序列化id
 
 
 
@@ -475,7 +475,7 @@ public enum State {
 
 各状态区别：
 
-1. Thread.sleep()不会释放对象的锁和CPU
+1. Thread.sleep()不会释放对象的锁
 2. Object.wait()释放锁和CPU
 3. BLOCKED状态使当前线程阻塞，会占有CPU等待抢占锁
 4. LockSupport.park(）没有使用锁，不占用CPU
@@ -5092,3 +5092,42 @@ G1是分区算法，可以处理新生代和老年代
 
 
 
+
+
+
+
+# 框架源码
+
+## Spring
+
+1. Spring读取配置文件类，读取其的@ComponetScan所需要扫描的类路径
+2. 使用类加载器读取下面的所有类，如果类上有@Component等注解的话，把该类封装为BeanDefinition，并且放到beanDefinitionMap中
+3. 完成扫描后，Spring对所有属性为单例的类，实例化，并放到singletonMap，方便后面getBean获取，并且在实例化的时候需要查看是否属性字段有@Autowired等注解，如果有给该字段注入属性对应值
+
+### bean生命周期
+
+1. class加载
+2. 实例化
+3. 得到原始对象
+4. 属性填充
+5. 后置处理器前调
+6. 初始化实现InitlizationBean接口
+7. 后置处理器后调
+
+
+
+
+
+
+
+## mysql
+
+mysql索引没有使用二叉树，因为碰到顺序元素会退化为链表
+
+也没有采用红黑树，因为红黑树是二插，深度太高了
+
+
+
+mysql底层使用的是b树，实际是b+树，叶节点存了实际的数据
+
+![1647911375949](java.assets/1647911375949.png)
