@@ -118,3 +118,154 @@
    1. key和string的value限制为512MB
 9. redis底层 答sds和skiplist
 10. redis类型
+
+
+
+## WAYZ科技一面
+
+1. 红黑树与二叉树区别
+
+   1. **红黑树有几种特性：**
+
+      ​    **1.每个节点只能是红色或者黑色。**
+
+      ​    **2.根节点必须是黑色。**
+
+      ​    **3.红色的节点，它的叶节点只能是黑色。**
+
+      ​    **4.从任一节点到其每个叶子的所有路径都包含相同数目的黑色节点。**
+
+   2. 红黑树（没有规定叶子节点的高度差不大于1）：
+
+      　　1红黑树只追求近似平衡，所以在插入与删除节点时，翻转次数远远少于平衡树，因此在需要较多插入删除操作的场景中，使用红黑树更好。
+
+2. b树和b+树
+
+3. 原子性、隔离性、持久性
+
+   1. 原子性undo log
+   2. 隔离性MVCC
+   3. 一致性redo log
+
+4. kafka是pull？优点缺点
+
+   1. consumer自己决定速度
+   2. 不用影响broker
+   3. 缺点：如果broker没有消息，自己不断轮训阻塞
+
+5. git工作流
+
+   1. 一个master分支，一个develop分支
+   2. master存储正式发布的历史，develop作为功能的集成分支，创建新功能应该基于develop分支
+   3. 新功能完成后合并到develop分支
+      1. 一旦develop做好了发布后，fork一个新分支作为发布分支用来修改bug，不做新功能开发
+      2. 之后合并到master分支并分配版本号tag和更新develop分支
+      3. 便于一个团队修改bug，一个团队开发新功能
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 项目
+
+## 认证和授权
+
+登录通过authenticationManager调用authenticate方法会去调用我们自己实现的UserDetailService的loadUserByUsername方法来判断用户是否存在
+
+![img](Liquid面试.assets/70.png)
+
+
+
+使用SpringSecurity，在每个controller上添加@PreAutorize注解（里面填写对应的授权验证方法），每个进来的用户都需要到该方法验证授权，根据用户传的jwt token来从redis获取用户信息，判断用户有没有对应的访问删除权限
+
+授权根据JWt，jwt包含了头、载荷信息（uuid加密）、签名（HMAC+SHA512）
+
+解决了单点登录问题
+
+![在这里插入图片描述](Liquid面试.assets/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NkbnlxZnlxZg==,size_16,color_FFFFFF,t_70.png)
+
+
+
+### JWT问题和趋势
+
+1、JWT默认不加密，但可以加密。生成原始令牌后，可以使用改令牌再次对其进行加密。
+
+2、当JWT未加密方法是，一些私密数据无法通过JWT传输。
+
+3、JWT不仅可用于认证，还可用于信息交换。善用JWT有助于减少服务器请求数据库的次数。
+
+4、JWT的最大缺点是服务器不保存会话状态，所以在使用期间不可能取消令牌或更改令牌的权限。也就是说，一旦JWT签发，在有效期内将会一直有效。
+
+5、JWT本身包含认证信息，因此一旦信息泄露，任何人都可以获得令牌的所有权限。为了减少盗用，JWT的有效期不宜设置太长。对于某些重要操作，用户在使用时应该每次都进行进行身份验证。
+
+6、为了减少盗用和窃取，JWT不建议使用HTTP协议来传输代码，而是使用加密的HTTPS协议进行传输。
+
+
+
+
+
+## xss
+
+```
+xss继承HttpServletRequestWrapper封装一个新的包装类来达到过xss过滤
+```
+
+与Filter配合，Filter把需要过滤的连接的request包装为xxsWrapper
+
+并且需要在config的@bean注解配置filter过滤器
+
+
+
+使用Jsoup白名单过滤，白名单选项使用basicWithImages，因为后台需要传送网站图片
+
+```java
+Whitelist.basicWithImages();
+```
+
+
+
+
+
+## 权限和菜单数据库
+
+首页面返回数据栗子：以菜单为单位，每个菜单包含了sitelist，sitelist包含了多个站点的地址图片所属菜单等信息,展示结果根据menu_id和ordernum排序
+
+根据导航的结果获得都是site数据，需要使用适配器配合map来映射为menu数据
+
+并且首页输出的导航信息的菜单栏都为最子层菜单栏，也就是没有子菜单栏
+
+```json
+"menuId": 3,
+            "menuName": "常用推荐",
+            "menuIcon": "star",
+            "parentId": 0,
+            "children": [],
+            "siteList": [
+                {
+                    "siteId": 2,
+                    "siteName": "Json 格式化",
+                    "menuId": 3,
+                    "sitePath": "/profile/site/system/affd14d5845d9aec96a05276b8a725e7.ico",
+                    "siteDescription": "在线 Json 格式化、解析、校验",
+                    "siteUrl": "http://tool.geshanzsq.com/json",
+                    "orderNum": null
+                },
+                {
+                    "siteId": 23,
+                    "siteName": "尔雅通识课",
+                    "menuId": 3,
+                    "sitePath": "/profile/site/system/c5d6b82510c991fb1fc22e24403ee4e7.png",
+                    "siteDescription": "在线查询尔雅通识课答案",
+                    "siteUrl": "http://tool.geshanzsq.com/erya",
+                    "orderNum": null
+                },
+```
+
