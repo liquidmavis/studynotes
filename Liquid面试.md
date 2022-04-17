@@ -164,6 +164,9 @@
 
 
 
+## WAYZ科技二面
+
+又是一堆redis、mysql问题，问能不能搞go语言
 
 
 
@@ -171,10 +174,7 @@
 
 
 
-
-
-
-# 项目
+# 导航项目
 
 ## 认证和授权
 
@@ -269,3 +269,383 @@ Whitelist.basicWithImages();
                 },
 ```
 
+
+
+
+
+## 数据范围限制
+
+通过datascope注解，有两个字端部门与用户，配合datasourceAspect对所有datascope注解修辞的方法进行数据过滤
+
+在数据库给每个role配置对应的datascope范围
+
+过滤掉对应部门和用户不该看到的数据
+
+
+
+切入点就为@Datascope
+
+advice为before
+
+切入和advice组成了切面
+
+织入：把切面应用到目标对象生成代理对象过程
+
+
+
+根据不同角色的数据范围来走不同的逻辑，不同的逻辑走不同的sql语句后面添加如下的
+
+的到所有Vo的父类又个Entity里面的params的datascope键值对里
+
+```
+OR {}.dept_id IN ( SELECT dept_id FROM sys_role_dept WHERE role_id = {}
+```
+
+1. `${params.dataScope}`使用该到mapper.xml文件中的sql语句后
+
+
+
+### #{}和${}
+
+#{}是占位符：动态解析->预编译->执行，能防止sql注入
+
+${}拼接符：动态解析->编译->执行，不能防止sql注入
+
+
+
+因为${}是拼接符，可以包含OR 1=1这些内容，使得服务器输出所有数据，改变sql命令原本含义
+
+
+
+## 异常处理
+
+使用全局异常处理器@ControllerAdvice
+
+配合@ExceptionHandler对不同的异常进行不同的处理
+
+
+
+
+
+## BaseController
+
+输出内容、分页等功能都放在BaseController中减少其他controller代码冗余
+
+```java
+/**
+ * 设置请求分页数据
+ */
+protected void startPage()
+{
+    PageDomain pageDomain = TableSupport.buildPageRequest();
+    Integer pageNum = pageDomain.getPageNum();
+    Integer pageSize = pageDomain.getPageSize();
+    if (StringUtils.isNotNull(pageNum) && StringUtils.isNotNull(pageSize))
+    {
+        String orderBy = SqlUtil.escapeOrderBySql(pageDomain.getOrderBy());
+        PageHelper.startPage(pageNum, pageSize, orderBy);
+    }
+}
+
+/**
+ * 响应请求分页数据
+ */
+@SuppressWarnings({ "rawtypes", "unchecked" })
+protected TableDataInfo getDataTable(List<?> list)
+{
+    TableDataInfo rspData = new TableDataInfo();
+    rspData.setCode(HttpStatus.SUCCESS);
+    rspData.setMsg("查询成功");
+    rspData.setRows(list);
+    rspData.setTotal(new PageInfo(list).getTotal());
+    return rspData;
+}
+```
+
+并且设置了数据绑定string转date
+
+```java
+/**
+ * 将前台传递过来的日期格式的字符串，自动转化为Date类型
+ */
+@InitBinder
+public void initBinder(WebDataBinder binder)
+{
+    // Date 类型转换
+    binder.registerCustomEditor(Date.class, new PropertyEditorSupport()
+    {
+        @Override
+        public void setAsText(String text)
+        {
+            setValue(DateUtils.parseDate(text));
+        }
+    });
+}
+```
+
+
+
+
+
+# 秒杀项目
+
+## 静态资源分离
+
+项目原本是tymleaf
+
+前后端分离，用redis来缓存html页面（缓存秒杀界面的详情的前几页内容一般不怎么变化），如果redis没有就去手动渲染页面
+
+
+
+前后端分离场景后端不应该在用html页面，而是用ajax是返回页面需要的数据，要不页面放在后端static里面，要不就自己部署一个前段服务器，利用浏览器来缓存页面信息
+
+
+
+## 解决库存超卖
+
+问题：
+
+​	库存没有限制不能为负数
+
+​	并发拿到的orderid都是一个
+
+​	秒杀订单大量重复
+
+
+
+解决：
+
+​	数据库加唯一索引
+
+​	优化sql语句防止负数
+
+## 优化接口
+
+通过redis预减库存，减少数据库的访问量，把商品库存（实现InitializingBean）加载到redis（redis预热）
+
+如果走到redis减库存，把消息封装为消息队列使用kafka来进行异步下单
+
+
+
+
+
+redis批量删除名字类似的键：
+
+```shell
+./redis-cli -h [$Addr] -a [$Password] keys "[$Key]*" | xargs ./redis-cli -h [$Addr] -a [$Password] del
+```
+
+
+
+
+
+## 分布式锁
+
+使用redis的setnx ex实现分布式锁，推荐lua脚步来实现原子性
+
+
+
+问题1:
+
+```
+如果没有设置ex，那么线程因为网络等原因挂掉后，锁不释放，所有其他线程一起等待
+```
+
+解决办法：
+
+```
+设置ex过期时间
+```
+
+问题2：
+
+```
+可能会出现一个加了锁之后，该线程业务处理时间超过锁的过期时间，锁过期了，另外一个线程又进来了，然后第一个线程理所当然的做完业务把锁删除，删除掉了另外一个线程上的锁
+```
+
+解决办法：
+
+```
+该锁的value复制uuid，每个线程不一样，线程删除锁时候需要查看uuid是否与自己一致，一致才能释放锁
+```
+
+​			
+
+
+
+## 安全优化
+
+### 秒杀接口隐藏
+
+防止黄牛提前准备好脚本来请求接口，根据用户和商品id生成一个唯一的接口地址
+
+一般还应该设置30-60秒的超时时间
+
+```java
+@Override
+public String creatPath(User user, Long goodsId) {
+    String path = Md5Util.md5(UUIDUtil.uuid());
+    redisTemplate.opsForValue().set("seckillpath:"+user.getId()+":"+goodsId,path);
+    return path;
+}
+
+
+@Override
+public boolean checkPath(User user,Long goodsId, String path) {
+    if(user == null || goodsId < 0 || StringUtils.isEmpty(path)){
+        return false;
+    }
+    String realPath = (String)redisTemplate.opsForValue().get("seckillpath:" + user.getId() + ":" + goodsId);
+    return path.equals(realPath);
+}
+```
+
+
+
+
+
+### 接口限流
+
+*1计数器算法*
+
+​	限制某个用户与该秒杀地址的访问次数
+
+​	用redis来存储用户访问地址的次数，在一定时间（几秒）超过一定次数那么久不允许其访问
+
+​	1、自定义限制次数注解
+
+```java
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.METHOD)
+public @interface AccessLimit {
+    boolean isLogin() default false;
+    int time();
+    int accessCount();
+}
+```
+
+​	2、通过自定义拦截器拦截使用了该注解的方法
+
+```java
+@Override
+public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+    User user = getUser(request,response);
+    UserContext.set(user);
+    if(user == null){
+        render(request,response,RespBeanEnum.LOGIN_NOTFOUND);
+        return false;
+    }
+    if(handler instanceof HandlerMethod){
+        AccessLimit annotation = ((HandlerMethod) handler).getMethodAnnotation(AccessLimit.class);
+        if(annotation == null){
+            return true;
+        }
+        boolean login = annotation.isLogin();
+        if(!login){
+            return true;
+        }
+        ValueOperations valueOperations = redisTemplate.opsForValue();
+        String key = request.getRequestURL() + ":" + user.getId();
+        Integer count = (Integer)valueOperations.get(key);
+        int accessCount = annotation.accessCount();
+        int time = annotation.time();
+        if(count == null){
+            valueOperations.set(key,1,time, TimeUnit.SECONDS);
+        }else if (count < accessCount){
+            valueOperations.increment(key);
+        }else {
+            render(request,response,RespBeanEnum.ACCESS_LIMIT);
+            return false;
+        }
+    }
+    return true;
+}
+```
+
+​	3、把拦截器添加到拦截器链中
+
+
+
+```java
+@Override
+public void addInterceptors(InterceptorRegistry registry) {
+    registry.addInterceptor(accessLimitInterceptor);
+}
+```
+
+# RPC项目
+
+需要技术：
+
+1. 网络传输
+
+   1. I/O多路复用，用一个线程监听多个socket，netty采用的reactor模型也是这种
+   2. netty主要实现了应用级别的零拷贝，如对数据操作的合并Bytebuf、wrap和slice等
+   3. 当然也提供了Direct Buffers使用堆外内存进行读写，效果如同操作系统层面的零拷贝
+
+2. 动态代理
+
+   1. 使用jdk代理包装行网络通信
+   2. 通过spring注入代理对象
+
+3. 集群模块
+
+   1. 服务发现zookeeper
+   2. 路由和负载均衡
+
+4. 扩展性
+
+   1. 使用SPI机制在配置文件META-INF/services创建以服务接口命名的文件，里面是接口的实现类
+
+5. 序列化机制
+
+   1. rpc对参数对象应该尽量简单，依赖关系少，对象不要有太多复杂继承关系	
+
+   ​			 		
+
+
+
+## 设计系统问题
+
+### 服务状态感知问题
+
+当某个服务心跳还在，但本身网络还存在问题，服务中心还是会维持这个不健康的节点
+
+如何才能检测到不健康节点并下线它
+
+之前系统的节点状态是死亡或者存活
+
+=》现在转换新的状态健康-〉生病-》死亡
+
+
+
+那如何从健康判断为生病，可以根据心跳失败的次数（具体次数根据实际情况）来判断
+
+但实际是根据次数来判断也不科学，因为每个业务的调用频数不一致，可以根据可用率来判断
+
+可用率：成功次数/总调用次数
+
+
+
+### 负载均衡
+
+RPC的负载均衡不依赖于外部的应用如Nginx等，而是自己实现，每次根据从注册中心获取的节点列表中根据均衡算法选择一个
+
+一般包括随机权重、Hash、轮询等
+
+
+
+但我们如何根据流量在不同机器的访问量来动态变更呢？
+
+答：由服务调用者来根据服务节点情况来判定服务的处理能力，可以建立一种指标数据如（节点的负载、cpu、内存、请求处理耗时、节点状态）
+
+
+
+那如何获取这些数据？
+
+1. 根据心跳传送节点的负载、cpu和内存、节点状态
+2. 根据实际的请求计算处理耗时
+3. 最后根据评分标准来打分
+4. 根据分数高的优先选择
+
+​	

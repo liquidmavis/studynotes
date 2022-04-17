@@ -1,3 +1,5 @@
+
+
 # JAVA
 
 ## 快捷键
@@ -4422,6 +4424,32 @@ jdbc就是使用了桥接模式，分为了Driver接口和Connection接口
 
 
 
+### DDD
+
+领域设计模式
+
+![img](java.assets/v2-471a850a6dfcbfda0689fd5731c49fc3_b.jpg)
+
+1. interface基本等同于MVC中的controller
+2. application基本等同于MVC中的Service接口，不包含实现类
+3. domain包含了各种service逻辑实现
+4. infrastructure提供各种工具类和持久化（数据库等）
+
+
+
+#### DDD与MVC
+
+MVC中domain中的行为拆分出来放到了service来处理
+
+而DDD赋予了domain行为了状态，具体如下
+
+```
+User user = new User();
+user.save();
+```
+
+
+
 
 
 ## JVM
@@ -5198,6 +5226,8 @@ G1是分区算法，可以处理新生代和老年代
 
 
 
+
+
 # 框架源码
 
 ## Spring
@@ -5393,6 +5423,80 @@ protected void addSingleton(String beanName, Object singletonObject) {
 
 
 
+
+## Mybatis
+
+### mapper如何自动实现子类
+
+mybatis底层是通过代理来实现的
+
+具体实现FactoryBean自定义bean的属性，可以看到是调用了getMapper方法
+
+```java
+public class MapperFactoryBean<T> extends SqlSessionDaoSupport implements FactoryBean<T> {
+  public T getObject() throws Exception {
+        return this.getSqlSession().getMapper(this.mapperInterface);
+    }
+}
+```
+
+getMapper逻辑里看到一个map对象映射了class类型和代理工厂，每个class对象都有一个代理工厂
+
+根据代理工厂来创建对象
+
+```java
+public class MybatisMapperRegistry extends MapperRegistry {
+
+    private final Configuration config;
+    private final Map<Class<?>, MybatisMapperProxyFactory<?>> knownMappers = new HashMap<>();
+     @Override
+    public <T> T getMapper(Class<T> type, SqlSession sqlSession) {
+        // TODO 这里换成 MybatisMapperProxyFactory 而不是 MapperProxyFactory
+        final MybatisMapperProxyFactory<T> mapperProxyFactory = (MybatisMapperProxyFactory<T>) knownMappers.get(type);
+        if (mapperProxyFactory == null) {
+            throw new BindingException("Type " + type + " is not known to the MybatisPlusMapperRegistry.");
+        }
+        try {
+            return mapperProxyFactory.newInstance(sqlSession);
+        } catch (Exception e) {
+            throw new BindingException("Error getting mapper instance. Cause: " + e, e);
+        }
+    }
+    }
+```
+
+代理工厂会封装一个mybatismapperProxy对象，然后用jdk代理创建代理对象
+
+```
+@SuppressWarnings("unchecked")
+protected T newInstance(MybatisMapperProxy<T> mapperProxy) {
+    return (T) Proxy.newProxyInstance(mapperInterface.getClassLoader(), new Class[]{mapperInterface}, mapperProxy);
+}
+
+public T newInstance(SqlSession sqlSession) {
+    final MybatisMapperProxy<T> mapperProxy = new MybatisMapperProxy<>(sqlSession, mapperInterface, methodCache);
+    return newInstance(mapperProxy);
+}
+```
+
+实际上mybatismapperProxy该对象实现了InovacationHandler
+
+```java
+public class MybatisMapperProxy<T> implements InvocationHandler, Serializable {
+  	@Override
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        try {
+            if (Object.class.equals(method.getDeclaringClass())) {
+                return method.invoke(this, args);
+            } else {
+                return cachedInvoker(method).invoke(proxy, method, args, sqlSession);
+            }
+        } catch (Throwable t) {
+            throw ExceptionUtil.unwrapThrowable(t);
+        }
+    }
+}
+```
 
 ## mysql
 
