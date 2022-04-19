@@ -180,6 +180,18 @@ java建议用户需要自己顶一个serialVersionUID变量在类中，当然自
 
 
 
+### BigDecimal
+
+该类实现对浮点类的运算，不会造成精度丢失
+
+
+
+注意：我们在使用 `BigDecimal` 时，为了防止精度丢失，推荐使用它的`BigDecimal(String val)`构造方法或者 `BigDecimal.valueOf(double val)` 静态方法来创建对象。
+
+![img](java.assets/image-20211213102222601.png)
+
+
+
 ### 代理
 
 1. 静态代理（每对一个对象进行代理就需要写一个代理类）
@@ -206,6 +218,24 @@ private <T> T getStudent(List<T> list){
 
 
 
+
+### 并发容器
+
+#### BlockingQueue
+
+阻塞队列的接口，实现类由`ArrayBlockingQueue`、`LinkedBlockingQueue` 、`PriorityBlockingQueue` 。
+
+ArrayBlockingQueue
+
+> 底层是数组，并发控制采用ReetrantLock
+
+LinkedBlockingQueue
+
+> 底层是链表，使用该结构需要控制大小
+
+PriorityBlockingQueue
+
+> 可以自定义compareTO来制定元素顺序
 
 ### 反射和注解
 
@@ -654,110 +684,6 @@ join()方法会让另外一个线程介入当前线程，只有线程执行完�
 
 
 
-#### CountDownLatch计数器
-
-java.util.concurrent的包下的类,构造函数输入一个数字后，等待数字对应的任务执行完毕，然后执行最后一个线程
-
-![1636701068311](java.assets/1636701068311.png)
-
-包含了await方法	阻塞当前任务，只有count为0时候，才不会阻塞
-
-​			countDown 每执行完一个任务就减少1
-
-​			getCount
-
-```java
-public class CarAssembleExample {
-    public static void main(String[] args) {
-        CountDownLatch countDownLatch = new CountDownLatch(10);
-        LastTask lastTask = new LastTask(countDownLatch);
-        new Thread(lastTask).start();
-        for (int i = 0; i < 10 ; i++) {
-            WorkTask workTask = new WorkTask(countDownLatch,i);
-            new Thread(workTask).start();
-        }
-    }
-}
-class WorkTask implements Runnable{
-    private CountDownLatch countDownLatch;
-    private int id;
-    public WorkTask(CountDownLatch countDownLatch,int id) {
-        this.countDownLatch = countDownLatch;
-        this.id = id;
-    }
-
-    @Override
-    public void run() {
-        try {
-            TimeUnit.SECONDS.sleep(1);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        countDownLatch.countDown();
-        System.out.println("id"+id+"配件生产完成");
-
-    }
-}
-class LastTask implements Runnable{
-    private CountDownLatch countDownLatch;
-
-    public LastTask(CountDownLatch countDownLatch) {
-        this.countDownLatch = countDownLatch;
-    }
-    @Override
-    public void run() {
-        try {
-            System.out.println("等待其他配件生产");
-            countDownLatch.await();
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-        System.out.println("最后组装完毕");
-    }
-}
-```
-
-
-
-#### CyclicBarrer
-
-屏障，只有所有线程都调用了await()方法后才能允许下一步工作，用处上来说与CountDownLatch其实一样
-
-
-
-#### Semaphore
-
-信号灯，通过设置多个凭证，线程需要通过acquire获取凭证，否则无法执行操作，持续等待，当执行完后release释放凭证
-
-```java
-public class SemaphoreTest {
-    public static void main(String[] args) {
-        Semaphore semaphore = new Semaphore(3);
-        for (int i = 0; i < 10; i++) {
-            new Thread(new Student(semaphore)).start();
-        }
-    }
-}
-class Student implements Runnable{
-    private Semaphore semaphore;
-
-    public Student(Semaphore semaphore) {
-        this.semaphore = semaphore;
-    }
-
-    @Override
-    public void run() {
-        try {
-            semaphore.acquire();
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-        System.out.println(Thread.currentThread().getId()+"实验完成");
-        semaphore.release();
-    }
-}
-```
-
 
 
 #### 死锁
@@ -972,6 +898,10 @@ LinkedBlockingQueue
 
 AQS全称为AbstractQueuedSynchronizer，该框架提供了一套同步管理通用机制
 
+封装线程为队列节点，CLH是虚拟的双向队列
+
+![AQS原理图](java.assets/AQS原理图.png)
+
 AQS对外暴露了state的值来同步状态，通过对变量使用volatile和方法CAS（compare and set）来保证同步
 
 CAS依赖于CPU底层，适用于多线程下解决变量同步问题
@@ -1055,6 +985,124 @@ class MyMutux {
 
 
 
+
+
+##### ReetrantLock
+
+下图为基本的AQS独占锁流程，通过内部抽象对象sync控制state状态，sync具体实现看选择共享锁还是非共享锁
+
+![img](java.assets/b8b53a70984668bc68653efe9531573e78636.png)
+
+
+
+##### CountDownLatch计数器
+
+java.util.concurrent的包下的类,构造函数输入一个数字后，等待数字对应的任务执行完毕，然后执行最后一个线程
+
+![1636701068311](java.assets/1636701068311.png)
+
+包含了await方法	阻塞当前任务，只有count为0时候，才不会阻塞
+
+​			countDown 每执行完一个任务就减少1
+
+​			getCount
+
+```java
+public class CarAssembleExample {
+    public static void main(String[] args) {
+        CountDownLatch countDownLatch = new CountDownLatch(10);
+        LastTask lastTask = new LastTask(countDownLatch);
+        new Thread(lastTask).start();
+        for (int i = 0; i < 10 ; i++) {
+            WorkTask workTask = new WorkTask(countDownLatch,i);
+            new Thread(workTask).start();
+        }
+    }
+}
+class WorkTask implements Runnable{
+    private CountDownLatch countDownLatch;
+    private int id;
+    public WorkTask(CountDownLatch countDownLatch,int id) {
+        this.countDownLatch = countDownLatch;
+        this.id = id;
+    }
+
+    @Override
+    public void run() {
+        try {
+            TimeUnit.SECONDS.sleep(1);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        countDownLatch.countDown();
+        System.out.println("id"+id+"配件生产完成");
+
+    }
+}
+class LastTask implements Runnable{
+    private CountDownLatch countDownLatch;
+
+    public LastTask(CountDownLatch countDownLatch) {
+        this.countDownLatch = countDownLatch;
+    }
+    @Override
+    public void run() {
+        try {
+            System.out.println("等待其他配件生产");
+            countDownLatch.await();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("最后组装完毕");
+    }
+}
+```
+
+
+
+##### CyclicBarrer
+
+屏障，只有所有线程都调用了await()方法后才能允许下一步工作，用处上来说与CountDownLatch其实一样
+
+
+
+##### Semaphore
+
+信号灯，通过设置多个凭证，线程需要通过acquire获取凭证，否则无法执行操作，持续等待，当执行完后release释放凭证
+
+```java
+public class SemaphoreTest {
+    public static void main(String[] args) {
+        Semaphore semaphore = new Semaphore(3);
+        for (int i = 0; i < 10; i++) {
+            new Thread(new Student(semaphore)).start();
+        }
+    }
+}
+class Student implements Runnable{
+    private Semaphore semaphore;
+
+    public Student(Semaphore semaphore) {
+        this.semaphore = semaphore;
+    }
+
+    @Override
+    public void run() {
+        try {
+            semaphore.acquire();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println(Thread.currentThread().getId()+"实验完成");
+        semaphore.release();
+    }
+}
+```
+
+
+
+
+
 #### ThreadLocal
 
 用该类可以确保每个线程存取自己的相关信息
@@ -1130,7 +1178,25 @@ public class ThreadLocalTest {
 }
 ```
 
+![ThreadLocal数据结构](java.assets/threadlocal数据结构.a0bfadf8.png)
 
+
+
+##### 内存泄漏
+
+内存泄漏根源不是因为弱引用，而是在于threadlocalmap的生命周期与线程一样长，并且没有手动删除对应key导致的
+
+如果threadlocal的key没有用弱引用，那么GC的时候甚至不能回收key对象
+
+**如果要解决问题**
+
+> threadlocal本身其实就已经在set和get设置了检查key==null的代码，如果查到了就设置value==null
+>
+> 手动要在关闭threadlocal的地方remove key
+
+**优化使用**
+
+​	使用static修饰threadlocal，因为threadlocal一般用在某个对象内部，如果不用static，每次都需要创建一个threadlocal**浪费资源**，使用了static，所有外部对象实栗共用一个threadlocal类对象
 
 
 
@@ -5504,14 +5570,9 @@ mysql索引没有使用二叉树，因为碰到顺序元素会退化为链表
 
 也没有采用红黑树，因为红黑树是二插，深度太高了
 
-
-
 mysql底层使用的是b树，实际是b+树，叶节点存了实际的数据
 
 ![1647911375949](java.assets/1647911375949.png)
-=======
-
-
 
 
 ## 秒杀
