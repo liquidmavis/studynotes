@@ -708,7 +708,23 @@ ThreadPoolExecutor类最常用的底层线程类
 
 当不能满足时候，放到阻塞队列，等待核心线程
 
-当阻塞队列装慢后，创建普通线程来执行任务，普通线程执行完任务后关闭
+当阻塞队列装慢后，创建普通线程（**临时线程**）来执行任务，普通线程执行完任务后关闭
+
+
+
+如果已经不足以处理新的请求了，需要一些策略解决：
+
+> 传入RejectedExecutionHandler
+>
+> AbortPolicy 跑出异常
+>
+> DiscardPolicy 仍掉新请求
+>
+> DiscardOldesPolicy 仍掉队列最旧的请求
+>
+> CallerRunsPolicy 只要线程池没关闭，在当前线程执行该任务
+
+
 
 ![1636794384385](java.assets/1636794384385.png)
 
@@ -2165,7 +2181,7 @@ Optional.ofNullable(person).map(o->o.getName()).ifPresent(o->{
 
 正向代理
 
-客户端想要访问原始服务器，无法访问到或其他原因，通过代理服务器来帮助他来访问
+客户端想要访问原始服务器，无法访问
 
 ![img](java.assets/v2-57472d50305b1525ecdc871cd811aa20_b.jpg)
 
@@ -3591,6 +3607,163 @@ public class ServerConfig {
     private DataSize datasize;
 }
 ```
+
+
+
+## SpringCloud
+
+![Spring Cloud 总体架构](java.assets/spring-cloud总体架构.jpg)
+
+### 服务发现
+
+`eureka`
+
+> 基于REST的服务，本质是HTTP协议。是个去中心化的服务注册中心。
+>
+> eureka注册的服务需要通过心跳机制与服务器连接
+
+![Eureka架构图](java.assets/5d723c49eca1468ab7b89af06743023c-new-imageb8aa3d41-fad4-4b38-add9-c304930ab285.png)
+
+
+
+### 负载均衡
+
+`Ribbo`
+
+> 运行在消费者端的负载均衡器
+>
+> 其原理就是客户端获取服务列表后，根据负载均衡算法选取其中一个服务区地址请求
+
+![img](java.assets/秒杀系统-ribbon2.jpg)
+
+
+
+### openFeign
+
+> 通过注解和配置减少消费者端调用的生成者的繁琐调用流程
+
+如下，原本需要写明地址
+
+```java
+@Autowired
+private RestTemplate restTemplate;
+// 这里是提供者A的ip地址，但是如果使用了 Eureka 那么就应该是提供者A的名称
+private static final String SERVICE_PROVIDER_A = "http://localhost:8081";
+
+@PostMapping("/judge")
+public boolean judge(@RequestBody Request request) {
+    String url = SERVICE_PROVIDER_A + "/service1";
+    // 是不是太麻烦了？？？每次都要 url、请求、返回类型的
+    return restTemplate.postForObject(url, request, Boolean.class);
+}
+
+```
+
+用了feign后，封装到service层
+
+然后在Controller调用就无感了
+
+本质其实就是使用动态代理技术代理该类的方法，隐藏了RestTemplate远程调用
+
+```java
+// 使用 @FeignClient 注解来指定提供者的名字
+@FeignClient(value = "eureka-client-provider")
+public interface TestClient {
+    // 这里一定要注意需要使用的是提供者那端的请求相对路径，这里就相当于映射了
+    @RequestMapping(value = "/provider/xxx",
+    method = RequestMethod.POST)
+    CommonResponse<List<Plan>> getPlans(@RequestBody planGetRequest request);
+}
+
+
+@RestController
+public class TestController {
+    // 这里就相当于原来自动注入的 Service
+    @Autowired
+    private TestClient testClient;
+    // controller 调用 service 层代码
+    @RequestMapping(value = "/test", method = RequestMethod.POST)
+    public CommonResponse<List<Plan>> get(@RequestBody planGetRequest request) {
+        return testClient.getPlans(request);
+    }
+}
+
+```
+
+
+
+### hystrix
+
+> 解决分布式系统调用以来中出现的服务失败导致的服务雪崩。Hystrix通过隔离服务之间的访问点
+>
+> 停止服务之间的请求故障并提供后备选择。
+>
+> 是一个能进行服务熔断和降级的库
+
+什么是服务雪崩？
+
+服务请求阻塞导致的计算机资源被消耗光
+
+![img](java.assets/Hystrix2.jpg)
+
+
+
+**熔断**
+
+通过熔断来解决服务雪崩问题。直接切除掉服务超时的链路
+
+
+
+**降级**
+
+发生了服务雪崩后，熔断机制解决了服务雪崩，为了给用户更好的体验，通过降级选择另一套方案来运行服务
+
+如微博热点新闻请求过多后，很多用户就会看到访问页面过多请等待
+
+```java
+// 指定了后备方法调用
+@HystrixCommand(fallbackMethod = "getHystrixNews")
+@GetMapping("/get/news")
+public News getNews(@PathVariable("id") int id) {
+    // 调用新闻系统的获取新闻api 代码逻辑省略
+}
+//
+public News getHystrixNews(@PathVariable("id") int id) {
+    // 做服务降级
+    // 返回当前人数太多，请稍后查看
+}
+
+```
+
+
+
+### Zuul
+
+> 网关
+>
+> 路由（隐藏真实请求路径）、限流（令牌桶）、鉴权、过滤器（Pre、Routing、Post生命周期）
+
+![img](java.assets/zuul-sj22o93nfdsjkdsf2312.jpg)
+
+### Config
+
+> 集中且动态的管理配置文件
+>
+> 一般放在git里
+
+![img](java.assets/config-ksksks.jpg)
+
+但如果需要动态改变需要与消息总线Bus配合
+
+
+
+### Bus
+
+> 管理和广播分布式系统中的消息
+
+![img](java.assets/springcloud-bus-s213dsfsd.jpg)
+
+
 
 
 
@@ -5293,6 +5466,128 @@ G1是分区算法，可以处理新生代和老年代
 
 
 
+### 性能调优
+
+#### 工具
+
+jps
+
+> 虚拟机进程状况工具
+
+```linux
+liquid@liquiddeMacBook-Air Desktop % jps
+94533 Jps
+74758 
+85929 Kafka
+93416 Launcher
+79853 
+94463 Main
+```
+
+
+
+jstat
+
+> 监视虚拟机各种运行状态
+>
+> 常用命令如下显示占据总空间的百分比
+
+```
+liquid@liquiddeMacBook-Air Desktop % jstat -gcutil 85929
+  S0     S1     E      O      M     CCS    YGC     YGCT    FGC    FGCT     GCT   
+  0.00  92.56  10.40  35.82  98.68  94.78     29    0.862     0    0.000    0.862
+```
+
+
+
+jmp
+
+> 获得虚拟机进程的堆快照
+
+
+
+jhat
+
+> 用来分析jmp生成的dump文件，并且通过http在网页端展示信息
+>
+> 不过一般不会使用该命令，而使用VisualVM或者Eclipse Memory Analyzer
+
+
+
+jstack
+
+> 用于获取当前时刻的线程快照，用来定位线程长时间停顿原因，能发现死锁
+
+我们下面模拟代码出现死锁，用jstack来发现
+
+下面的java代码，线程1持有了锁1，想要获得🔒2，线程2持有了🔒2，想要获得🔒1
+
+```java
+public class Test {
+    public static void main(String[] args) {
+        Object object = new Object();
+        Object object1 = new Object();
+        new Thread(()->{
+            synchronized (object){
+                try {
+                    System.out.println(Thread.currentThread().getName()+"获取到1锁");
+                    TimeUnit.SECONDS.sleep(5);
+                    synchronized (object1){
+                        System.out.println(Thread.currentThread().getName()+"获取到2锁");
+                    }
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+
+        new Thread(()->{
+            synchronized (object1){
+                try {
+                    System.out.println(Thread.currentThread().getName()+"获取到2锁");
+                    TimeUnit.SECONDS.sleep(5);
+                    synchronized (object){
+                        System.out.println(Thread.currentThread().getName()+"获取到1锁");
+                        System.out.println("2");
+                    }
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+}
+```
+
+可以发现jstack发现了死锁，给出了线程和锁的具体信息
+
+```
+ava stack information for the threads listed above:
+===================================================
+"Thread-1":
+	at com.cuit.Test.lambda$main$1(Test.java:30)
+	- waiting to lock <0x000000076ad2caa0> (a java.lang.Object)
+	- locked <0x000000076ad2cab0> (a java.lang.Object)
+	at com.cuit.Test$$Lambda$2/728890494.run(Unknown Source)
+	at java.lang.Thread.run(Thread.java:750)
+"Thread-0":
+	at com.cuit.Test.lambda$main$0(Test.java:16)
+	- waiting to lock <0x000000076ad2cab0> (a java.lang.Object)
+	- locked <0x000000076ad2caa0> (a java.lang.Object)
+	at com.cuit.Test$$Lambda$1/1190654826.run(Unknown Source)
+	at java.lang.Thread.run(Thread.java:750)
+
+Found 1 deadlock.
+```
+
+
+
+VisualVm
+
+> 整合上面所有的功能且是官方的工具并且免费
+
+
+
 
 # 框架源码
 
@@ -5490,6 +5785,70 @@ protected void addSingleton(String beanName, Object singletonObject) {
 
 
 
+### 事务传播行为
+
+> 为了解决业务层方法之间互相调用的事务问题
+
+**`@Transactional` 的常用配置参数总结（只列出了 5 个我平时比较常用的）：**
+
+| 属性名      | 说明                                                         |
+| :---------- | :----------------------------------------------------------- |
+| propagation | 事务的传播行为，默认值为 REQUIRED，可选的值在上面介绍过      |
+| isolation   | 事务的隔离级别，默认值采用 DEFAULT，可选的值在上面介绍过     |
+| timeout     | 事务的超时时间，默认值为-1（不会超时）。如果超过该时间限制但事务还没有完成，则自动回滚事务。 |
+| readOnly    | 指定事务是否为只读事务，默认值为 false。                     |
+| rollbackFor | 用于指定能够触发事务回滚的异常类型，并且可以指定多个异常类型 |
+
+
+
+其中propagation规定了事务的传播行为
+
+**`TransactionDefinition.PROPAGATION_REQUIRED`**
+
+***默认的传播行为***，如果当前存在事务，加入该事务，如果不存在，自己创一个新事务，比如b有事务，调用了a，那么a跟b用同一个事务，如果b没有，a就创建一个新事务
+
+
+
+**`TransactionDefinition.PROPAGATION_REQUIRES_NEW`**
+
+当前存在事务，把当前事务挂起，自己另外新建一个。互相不影响，但是如果新事务抛出了异常，且异常刚好被上层事务捕捉的话，上层事务也会回滚
+
+
+
+**`TransactionDefinition.PROPAGATION_NESTED`**
+
+与上一个类似，但它创建事务是嵌套于上一层事务的
+
+![img](java.assets/777.png)
+
+
+
+##### 事务问题
+
+避免自调用，也就是同一类中调用方法
+
+比如下面method1调用了mehod2，导致了method2的事务失效，原因是spring aop导致的
+
+解决办法要不就是不再同一类中调用方法，要不就是换成AspectJ
+
+```java
+@Service
+public class MyService {
+
+private void method1() {
+     method2();
+     //......
+}
+@Transactional
+ public void method2() {
+     //......
+  }
+}
+
+```
+
+
+
 ## Mybatis
 
 ### mapper如何自动实现子类
@@ -5573,6 +5932,66 @@ mysql索引没有使用二叉树，因为碰到顺序元素会退化为链表
 mysql底层使用的是b树，实际是b+树，叶节点存了实际的数据
 
 ![1647911375949](java.assets/1647911375949.png)
+
+
+
+## SpringBoot
+
+#### 自动装配
+
+问题
+
+> 什么是自动装配
+>
+> 怎么实现自动装配，如何实现按需加载
+
+springboot通过`@SpringBootApplication`注解导入了`@EnableAutoConfiguration`注解
+
+又`@import`了下面的类
+
+```java
+@Import({AutoConfigurationImportSelector.class})
+public @interface EnableAutoConfiguration {
+    String ENABLED_OVERRIDE_PROPERTY = "spring.boot.enableautoconfiguration";
+
+    Class<?>[] exclude() default {};
+
+    String[] excludeName() default {};
+}
+```
+
+往该`AutoConfigurationImportSelector`下面查看会发现它其实就是去查看 META-INF/spring.factories下面的`EnableAutoConfiguration`对应的值然后添加进来，本质类似于我们的Dubbo的SPI机制
+
+```java
+protected List<String> getCandidateConfigurations(AnnotationMetadata metadata, AnnotationAttributes attributes) {
+   List<String> configurations = SpringFactoriesLoader.loadFactoryNames(getSpringFactoriesLoaderFactoryClass(),
+         getBeanClassLoader());
+   Assert.notEmpty(configurations, "No auto configuration classes found in META-INF/spring.factories. If you "
+         + "are using a custom packaging, make sure that file is correct.");
+   return configurations;
+}
+```
+
+最后会需要过滤掉一些不符合条件的类，通过`AutoConfigurationImportFilter`，比如使用了如下注解的
+
+- `@ConditionalOnBean`：当容器里有指定 Bean 的条件下
+- `@ConditionalOnMissingBean`：当容器里没有指定 Bean 的情况下
+- `@ConditionalOnSingleCandidate`：当指定 Bean 在容器中只有一个，或者虽然有多个但是指定首选 Bean
+
+当前加入的类使用了`@ConditionalOnBean`如果过滤器发现该注解里面加入的类不存在在容器中，那么久不会导入该类了
+
+
+
+
+
+#### 参数校验
+
+如果需要自定义参数校验
+
+1. 需要先实现参数注解
+2. 并且实现`ConstraintValidator`接口就可以正常使用了
+
+
 
 
 ## 秒杀
@@ -6137,9 +6556,9 @@ try {   Long start = System.currentTimeMillis();   while(true) {       String re
 
 
 
-## 分布式
+# 分布式
 
-### 分布式锁
+## 分布式锁
 
 在分不锁的情况下，能保证多机、多进程多线程访问资源的一致性，这个时候还需要进程内部的jvm锁吗？
 
@@ -6157,9 +6576,104 @@ try {   Long start = System.currentTimeMillis();   while(true) {       String re
 
 
 
-### 分布式id
+## 分布式id
 
-#### 雪花算法
+### 雪花算法
 
 ![img](java.assets/1021.jpeg)
+
 >>>>>>> Stashed changes
+
+
+
+## 经典理论
+
+### CAP
+
+> 一致性、可用性和分区容错性
+>
+> 当网络分区出现的时候，如果要继续服务，只能在一致性和可用性中进行选择
+>
+> 所以出现了两种方案AP（Eureka）和CP（Zookeeper）
+
+![图片](java.assets/640-20220421203902568.png)
+
+### BASE
+
+> 在一致性上的妥协
+>
+> 即使无法做到强一致性，也要采取适当的方法使系统达到最终一致性
+>
+> 具体来说是AP方案的补充
+
+![图片](java.assets/640-20220421204333390.png)
+
+
+
+## 分布式事务
+
+> 终极目标保证系统中多个相关的数据库的数据一致性
+
+
+
+分类上分为柔性事务和刚性事务
+
+1. 柔性事务：追求最终一致性，基于BASE理论
+   1. 典型有**TCC、Saga**
+2. 刚性事务：追求强一致性
+   1. 典型有2阶段、3阶段提交
+
+
+
+### 2阶段
+
+> 分为Prepare和Commit
+
+准备阶段询问事务参与者执行本地事务是否成功
+
+提交阶段询问事务参与者提交事务是否成功
+
+![image.png](java.assets/1632404100842-e72c3653-24ac-4c5c-a8ca-ccc15bcb66e0.png)
+
+当任意一个事务参与者失败后，所有事务参与者回滚
+
+
+
+#### 缺点：
+
+1. 单点故障，协调者挂掉
+2. 数据不一致性。某个参与者未收到提交命令，挂掉了，其他事务都提交了，当他恢复的时候就回滚了，导致与其他数据不一样
+
+
+
+### 3阶段
+
+> 对Prepare阶段进行细化
+>
+> 引入了超时机制
+
+1. 询问阶段：不执行事务操作，只询问是否能执行本地数据库事务操作
+2. 准备阶段：所有参与者能执行后，才会开始执行本地数据库事务预操作redo、undo log写
+3. 提交阶段：都操作完成后，提交事务
+
+![image.png](java.assets/1632404119777-ff64ade3-a64f-48a5-93de-54789990bdd6.png)
+
+#### 优点
+
+通过加入了PreCommit解决了数据一致性问题
+
+
+
+
+
+### TCC（补偿事务）
+
+> 柔性事务代表
+
+三个阶段
+
+1. Try阶段：尝试执行，完成业务检查，并预留好业务资源
+2. Confirm阶段：确认执行。当所有参与者的Try执行成功后，执行Confirm，处理预留资源。否则，进行Cancel
+3. Cancel阶段：释放预留资源
+
+![image.png](java.assets/1632404138972-0399a423-1e7c-458d-ba80-aca54e00a617.png)

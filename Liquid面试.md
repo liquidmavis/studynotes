@@ -597,6 +597,67 @@ public void addInterceptors(InterceptorRegistry registry) {
 
    1. 使用SPI机制在配置文件META-INF/services创建以服务接口命名的文件，里面是接口的实现类
 
+   2. 多级缓存 1级缓存缓存`接口类型对应ExtensionLoader`。2级缓存`配置文件中key和持有实现类的holder`
+
+   3. 三级缓存`所有配置文件的classes`。4级缓存`class对应实例`
+
+   4. ```java
+      public class ExtensionLoader<T> {
+          private static final String SERVICE_DIR = "META-INF/extensions/";
+          private static final Map<Class<?>,ExtensionLoader<?>> EXTENSION_LOADERS = new HashMap<Class<?>,ExtensionLoader<?>>();
+          private static final Map<Class<?>,Object> EXTENSION_INSTANCES = new ConcurrentHashMap<Class<?>,Object>();
+      
+          private final Class<?> type;
+          private final Map<String,Holder<Object>> cachedInstance = new ConcurrentHashMap();
+          private final Holder<Map<String,Class<?>>> cachedClasses = new Holder<>();
+      
+          private ExtensionLoader(Class<?> type){
+              this.type = type;
+          }
+      
+          public static <S>ExtensionLoader<S> getExtensionLoader(Class<?> type){
+              if(type == null){
+                  throw new IllegalArgumentException("扩展类型为空");
+              }
+              if(!type.isInterface()){
+                  throw new IllegalArgumentException("扩展类必须为接口");
+              }
+              if(type.getAnnotation(SPI.class) == null){
+                  throw new IllegalArgumentException("扩展类没有SPI注解");
+              }
+              ExtensionLoader<S> extensionLoader = (ExtensionLoader<S>)EXTENSION_LOADERS.get(type);
+              if(extensionLoader == null){
+                  EXTENSION_LOADERS.putIfAbsent(type,new ExtensionLoader<S>(type));
+                  extensionLoader = (ExtensionLoader<S>)EXTENSION_LOADERS.get(type);
+              }
+              return extensionLoader;
+          }
+      
+          public <T> T getExtension(String name){
+              if(name == null || name.isEmpty()){
+                  throw new IllegalArgumentException("扩展类名字不能为空");
+              }
+              Holder<Object> objectHolder = cachedInstance.get(name);
+              if(objectHolder == null){
+                  cachedInstance.putIfAbsent(name,new Holder<Object>());
+                  objectHolder = cachedInstance.get(name);
+              }
+              T value = (T)objectHolder.getValue();
+              if(value == null){
+                  synchronized(objectHolder){
+                      value = (T)objectHolder.getValue();
+                      if(value == null){
+                          value = createExtension(name);
+                          objectHolder.setValue(value);
+                      }
+                  }
+              }
+              return (T)value;
+          }
+      ```
+
+      
+
 5. 序列化机制
 
    1. rpc对参数对象应该尽量简单，依赖关系少，对象不要有太多复杂继承关系	
@@ -648,4 +709,72 @@ RPC的负载均衡不依赖于外部的应用如Nginx等，而是自己实现，
 3. 最后根据评分标准来打分
 4. 根据分数高的优先选择
 
-​	
+
+
+
+
+## dubbo
+
+### 如何解决粘包半包问题
+
+在`ExchangeCodec`的decode方法中
+
+判断实际传送的数据长度小于了预计的长度的话那么这里就返回一个NEED_MORE_INPUT
+
+```java
+int tt = len + HEADER_LENGTH;
+        if (readable < tt) {
+            return DecodeResult.NEED_MORE_INPUT;
+        }
+```
+
+
+
+在实际添加进client和server端的handler是`NettyCodecAdapter`	，他下面的`InternalDecoder`实际调用了上面的`ExchangeCodec`的decode方法，然后判断返回的值是否是NEED_MORE_INPUT，那么就回滚到之前还未读取的状态
+
+然后只要buffer一直可读就循环（循环相等于等待半包的到来）
+
+```java
+do {
+                    saveReaderIndex = message.readerIndex();
+                    try {
+                        msg = codec.decode(channel, message);
+                    } catch (IOException e) {
+                        buffer = org.apache.dubbo.remoting.buffer.ChannelBuffers.EMPTY_BUFFER;
+                        throw e;
+                    }
+                    if (msg == Codec2.DecodeResult.NEED_MORE_INPUT) {
+                        message.readerIndex(saveReaderIndex);
+                        break;
+                    } else {
+                        if (saveReaderIndex == message.readerIndex()) {
+                            buffer = org.apache.dubbo.remoting.buffer.ChannelBuffers.EMPTY_BUFFER;
+                            throw new IOException("Decode without read data.");
+                        }
+                        if (msg != null) {
+                            Channels.fireMessageReceived(ctx, msg, event.getRemoteAddress());
+                        }
+                    }
+                } while (message.readable());
+```
+
+
+
+解决粘包问题的代码是紧随其后的finally中
+
+可以看到他会抛弃已经被读的字节并且把值复制给buffer变量保存，以备下次数据来拼接完整
+
+```java
+private org.apache.dubbo.remoting.buffer.ChannelBuffer buffer =
+                org.apache.dubbo.remoting.buffer.ChannelBuffers.EMPTY_BUFFER;
+finally {
+                if (message.readable()) {
+                    message.discardReadBytes();
+                    buffer = message;
+                } else {
+                    buffer = org.apache.dubbo.remoting.buffer.ChannelBuffers.EMPTY_BUFFER;
+                }
+                NettyChannel.removeChannelIfDisconnected(ctx.getChannel());
+            }
+```
+

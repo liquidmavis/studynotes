@@ -604,6 +604,20 @@ if redis.call('get',KETS[1])==ARGV[1] then return redis.call('del',KEYS[1]) else
 
 
 
+### redission
+
+> 是一个基于Redis实现的Java驻内存数据网格，对redis数据结构进行封装为java对应的结构，并且网络传输采用Netty
+>
+> 提供了分布式锁
+
+使用起来跟AQS的可重入锁基本类似
+
+![图片](Redis.assets/640.png)
+
+
+
+
+
 ## redis面试
 
 1. 分布式锁的实现有哪些，分别怎么实现的，redis的具体实现以及操作
