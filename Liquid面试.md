@@ -7,7 +7,7 @@
 2. 项目为甚么选择zookeeper
 
    1. zookeeper是基于CP（强一致性和分区容错性），CAP（一致性、可用性、分区容错性）
-   2. BASE（基本可用、软状态、最终一致性）由CAP发展而来：核心思想在于即使无法做到强一致性，也要做到最终一致性，也是堆AP理论的补充
+   2. BASE（基本可用、软状态、最终一致性）由CAP发展而来：核心思想在于即使无法做到强一致性，也要做到最终一致性，也是对AP理论的补充
    3. mysql、redis和eureka都没有保证一致性
 
 3. zookeeper是如何做到分布式一致性的
@@ -121,6 +121,74 @@
 
 
 
+## 京东暑期实习一面
+
+1. 线程的状态
+2. notify原理，多个线程如何唤醒
+3. 如何实现两个线程顺序执行
+   1. Lock的Condition
+4. 在某个方法中异步执行其他，创建线程的步骤
+   1. Future和Callable
+5. 创建线程任务的Runnable使用匿名类
+6. 匿名类与有名类区别
+7. 调用方法和Thread和Runnable生命周期（答的有问题）
+   1. 需要考虑jvm
+8. Thread被分配到jvm堆上
+9. Thread的方法
+   1. sleep休眠当前线程
+   2. yield放弃当前cpu时间片
+   3. start启动当前线程
+   4. run执行的任务操作
+   5. join，线程a调用线程b的join方法会阻塞a
+   6. Thread构造函数可以传入同步的Runnable或者异步带返回值的Callable
+10. 何时被回收
+11. java集合类
+12. arraylist和linkedlist
+13. 数组为什么查询快
+14. 重载和重写
+15. 面向对象三大特性
+16. tcp三次握手
+17. nginx如何在客户端与服务端通信，服务端如何获取客户端ip
+    1. 客户端和服务端都是分别与nginx交流
+    2. 在nginx中配置header下的x-forwarded-for为客户端ip
+    3. 服务器可以根据nginx传输的http协议数据的header中x-forwarded-for来查看客户端ip
+18. 进程通信方式
+19. 了解rpc框架吗？要使用dubbo步骤有哪些
+20. rpc的zookeeper干什么的
+21. rpc调用流程，生产者如何发布，消费者如何使用服务
+22. 两个服务之间通信出现问题如何排查
+    1. 排查生产者日志是否有数据进入
+    2. 排查消费者日志是否调用成功生产者
+23. 如果消费端报了超时如何处理
+    1. ping ip是否通
+    2. 通的话，查看生产端业务哪里超时
+24. ping命令
+    1. 查看网络是否连通
+    2. 可以根据ping返回数据估算网络状态
+25. linux常用命令
+    1. top查内存
+    2. ps -ef | grep 查看进程id
+    3. df -h磁盘
+    4. tail -f catalina.out查看tomcat日志
+    5. netstat -anp | grep查看端口占用情况
+    6. find / -name 文件名
+26. jvm出现内存溢出
+    1. jmap dump出文件
+    2. 放到jviusal vm中查看具体哪个类占用内存过多
+    3. 分析为什么没有被垃圾收集器收集
+27. 你的LRPC项目的实现思路
+28. 设计模式了解吗？适配器和包装器区别
+29. 线程安全
+    1. 原子性
+    2. 有序性：防止指令重排序
+    3. 可见行
+    4. 出现安全问题的原因：
+       1. 线程切换带来的原子性问题
+       2. 编译优化带来的无序性问题
+       3. 缓存导致的可见行问题
+
+
+
 ## WAYZ科技一面
 
 1. 红黑树与二叉树区别
@@ -145,7 +213,7 @@
 
    1. 原子性undo log
    2. 隔离性MVCC
-   3. 一致性redo log
+   3. 持久性redo log
 
 4. kafka是pull？优点缺点
 
@@ -585,10 +653,7 @@ public void addInterceptors(InterceptorRegistry registry) {
 
 2. 动态代理
 
-   1. 使用jdk代理包装行网络通信
-   2. 通过spring注入代理对象
-
-3. 集群模块
+   1. 集群模块
 
    1. 服务发现zookeeper
    2. 路由和负载均衡

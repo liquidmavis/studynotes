@@ -217,6 +217,221 @@ private <T> T getStudent(List<T> list){
 
 
 
+### 文件
+
+#### 流
+
+> java使用统一的概念处理所有的IO，包括磁盘和网络等
+
+
+
+#### 装饰器模式
+
+Java引入了装饰器模式来加强基本流的功能
+
+1. 对流起缓存作用的：BuffedInputStream
+2. 对基本数据类型和字符串对流进行操作的：DataInputStream
+3. 对流进行压缩：GZIPInputStream
+
+
+
+#### Reader和Writer
+
+> InputStream和OutputStream为基类的流基本都是以二进制处理数据，不方便处理文本，没有编码的概念
+>
+> 提供了新基类Reader和Writer
+
+
+
+
+
+### 容器
+
+#### Map和Set接口
+
+map对应键值对映射，Set带逻辑去重
+
+
+
+##### Hashmap
+
+内部有个hash表，即数组table，每个元素的table[i]指向一个单向链表，根据键去值，用键计算出hash值，取模得到数组索引中的位置，然后操作对应单向链表。操作单向链表的时候首先根据hash值对比，`如果相同才会对比equals函数，这就要求相同对象应该有相同的hashcode和equals返回值。`
+
+
+
+##### hashset
+
+特点
+
+1. 没有重复元素
+2. 可以高效添加和删除，自带去重和集合运算
+3. 没有顺序
+
+
+
+hashset内部维护了一个hashmap对象，只是外部封装了，因为set只有键没有值，他给值封装了默认的对象，让所有键的值都为默认的对象
+
+```java
+private transient HashMap<E,Object> map
+  
+//键的默认值
+private static final Object PRESENT = new Object();
+```
+
+
+
+##### treemap
+
+拥有排序的功能，底层使用红黑树，使用该方法应该传入一个实现Comparator接口的比较器
+
+```java
+public TreeMap(Comparator<? super K> comparator)
+```
+
+总之，该对象必须拥有比较功能，优先使用比较器，没有比较器就用键对象的compareTo方法
+
+
+
+##### treeset
+
+基于treemap实现去重
+
+去重基于比较结果，比较结果为0就判定为相同
+
+内部维护对象如下，`NavigableMap实现类就是treemap`
+
+```java
+private transient NavigableMap<E,Object> m;
+private static final Object PRESENT = new Object();
+```
+
+
+
+##### linkedHashmap
+
+内部维护了一个双向链表
+
+带有元素按插入顺序和访问顺序，默认情况下是按插入顺序，插入顺序用途可以用在购物车实现上
+
+访问顺序可以用在缓存上，把访问过的数据放到链表尾部
+
+通过编写子类重新父类`removeEldestEntry`方法可以实现简单的LRU链表
+
+```java
+public class ListTest {
+    public static void main(String[] args) {
+        Cache<String, Integer> list = new Cache<>(3);
+        list.put("c",100);
+        list.put("a",200);
+        list.put("b",140);
+        list.get("c");
+        list.get("b");
+        list.put("d",100);
+
+        for(Map.Entry<String,Integer> entry : list.entrySet()){
+            System.out.println(entry.getKey()+" "+entry.getValue());
+        }
+    }
+}
+class Cache<K,V> extends LinkedHashMap<K,V>{
+    private int maxSize;
+    public Cache(int initialCapacity) {
+        super(initialCapacity,0.75f,true);
+        maxSize = initialCapacity;
+    }
+
+    @Override
+    protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+        return size()>maxSize;
+    }
+}
+```
+
+
+
+`removeEldestEntry`原理是，每次添加元素后会调用该方法判断，如果为true，会调用`removeEntryForKey`进行删除元素
+
+
+
+##### LinkedHashSet
+
+与前面一样，其内部维护了LinkedHashMap对象
+
+然后也是实现了去重功能
+
+
+
+#### 堆与优先级队列
+
+##### PriorityQueue
+
+实现了Queue接口，内部用堆实现，物理结构上用动态数组实现
+
+```java
+PriorityQueue<Integer> queue = new PriorityQueue<>(Collections.reverseOrder());
+        queue.addAll(Arrays.asList(6,4,321,32,7,68));
+        while(!queue.isEmpty()){
+            System.out.println(queue.poll());
+        }
+```
+
+
+
+插入元素原理如下：
+
+这里会判断是不是数组满了，满了调用`grow`方法，之后看是否第一次添加，是直接插入到数组头部，不是就放在尾部`siftUp`向上寻合适位置
+
+```java
+public boolean offer(E e) {
+        if (e == null)
+            throw new NullPointerException();
+        modCount++;
+        int i = size;
+        if (i >= queue.length)
+            grow(i + 1);
+        size = i + 1;
+        if (i == 0)
+            queue[0] = e;
+        else
+            siftUp(i, e);
+        return true;
+    }
+```
+
+
+
+grow方法如下：会把数组长度变为原来长度的两倍，并且复制使用Arrays.copyof
+
+```java
+private void grow(int minCapacity) {
+        int oldCapacity = queue.length;
+        // Double size if small; else grow by 50%
+        int newCapacity = oldCapacity + ((oldCapacity < 64) ?
+                                         (oldCapacity + 2) :
+                                         (oldCapacity >> 1));
+        // overflow-conscious code
+        if (newCapacity - MAX_ARRAY_SIZE > 0)
+            newCapacity = hugeCapacity(minCapacity);
+        queue = Arrays.copyOf(queue, newCapacity);
+    }
+```
+
+向上寻找代码如下，把k设置为数组末尾，然后不断向上寻找位置，直到要插入元素大于父节点元素
+
+```java
+while (k > 0) {
+            int parent = (k - 1) >>> 1;
+            Object e = queue[parent];
+            if (comparator.compare(x, (E) e) >= 0)
+                break;
+            queue[k] = e;
+            k = parent;
+        }
+        queue[k] = x;
+```
+
+
+
 
 
 ### 并发容器
@@ -236,6 +451,62 @@ LinkedBlockingQueue
 PriorityBlockingQueue
 
 > 可以自定义compareTO来制定元素顺序
+
+
+
+
+
+#### CopyOnWrite
+
+> 写时复制，解决并发问题的重要思路
+>
+> 适合用在
+
+##### CopyOnWriteArrayList
+
+> 线程安全
+>
+> 迭代器不支持修改，不抛错，是一种fail-safe
+>
+> 原子方法支持复合操作
+
+内部维护一个数组，数组以原子方式更新，每次操作都需要新建一个数组，在新数组上修改，然后原子方法设置数组引用
+
+
+
+##### CopyOnWriteArraySet
+
+内部维护了CopyOnWriteArrayList
+
+他的添加方法就是调用了list的`addIfAbsent`来去掉重复的数据
+
+```java
+public boolean add(E e) {
+ return al.addIfAbsent(e);
+}
+```
+
+
+
+
+
+#### 基于跳表的map和set
+
+> 带有排序功能，并发容器没有用树而用跳跃表实现，redis也是基于这个实现sortedset
+
+
+
+##### CocurrentSkipListMap
+
+> 有序、无锁非阻塞，完全并行，实现复杂度接近二分查找
+
+CocurrentSkipListSet是基于CocurrentSkipListMap来实现的
+
+![Snip20220514_51](java.assets/Snip20220514_51.png)
+
+
+
+
 
 ### 反射和注解
 
@@ -1916,8 +2187,8 @@ lambda还在运行时候生成一个内部类，重写接口方法为lambda定�
   - 匿名内部类可以是多个方法
   - lambda必须只有一个
 - 实现原理不一样
-  - 匿名内部类是编译器生成class
-  - lambda是在运行时候生成class
+  - 匿名内部类是编译器生成class，其会为每个匿名内部类生成一个类
+  - lambda是在运行时候生成class，lambda表达式不会生成一个类
 
 
 
@@ -2074,6 +2345,8 @@ Supplier接口“：Supplier < T> T get() 无参有返回值的抽象方法
 
 
 #### stream流
+
+> 优点：没有显示的循环操作；提供了声明式的处理函数；流畅式接口，方法调用连接在一起
 
 java提供的对数组和集合的流式操作
 
@@ -5937,6 +6210,18 @@ mysql底层使用的是b树，实际是b+树，叶节点存了实际的数据
 
 ## SpringBoot
 
+#### pom关系
+
+![img](java.assets/images?url=https%3A%2F%2Fimg-blog.csdnimg.cn%2Fimg_convert%2F75dec7fcb47b1492794b1a38e176a79c.webp%3Fx-oss-process%3Dimage%2Fformat%2Cpng&sign=a35c11962b4506bbe1e789b0d581db06a52a7e71f9ecca88247ffc1923caf36e)
+
+
+
+
+
+
+
+
+
 #### 自动装配
 
 问题
@@ -5981,6 +6266,67 @@ protected List<String> getCandidateConfigurations(AnnotationMetadata metadata, A
 当前加入的类使用了`@ConditionalOnBean`如果过滤器发现该注解里面加入的类不存在在容器中，那么久不会导入该类了
 
 
+
+
+
+##### Condition接口
+
+Condition是所有Condition的父接口，定义了一个match方法，该方法如果返回true就会让被`@Conditional`注解修辞的类加入到容器中
+
+```java
+@FunctionalInterface
+public interface Condition {
+	boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata);
+}
+```
+
+我们点击OnClassCondition就是实际实现了Condition接口的类，并且做了判断该类能否加入容器
+
+```java
+@Documented
+@Conditional(OnClassCondition.class)
+public @interface ConditionalOnClass {
+```
+
+下面是该类的继承关系
+
+![Snip20220422_16](java.assets/Snip20220422_16.png)
+
+
+
+可以看到`Condition`接口被`SpringBootCondition`实现，从该类开始，他对子类隐藏了`match`方法，而只提供了模版方法`getMatchOutcome`，父类`match`会调用`getMatchOutcome`，返回`ContionOutCome`类，由他来保存是否`match`的结果
+
+```java
+protected final boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata, Condition condition) {
+		if (condition instanceof SpringBootCondition) {
+			return ((SpringBootCondition) condition).getMatchOutcome(context, metadata).isMatch();
+		}
+		return condition.matches(context, metadata);
+	}
+```
+
+
+
+那么match方法多久被调用的呢，根据调用栈会看到是由ConditionEvaluator类的shouldSkip方法来调用的
+
+```java
+public boolean shouldSkip(@Nullable AnnotatedTypeMetadata metadata, @Nullable ConfigurationPhase phase) {
+		if (metadata == null || !metadata.isAnnotated(Conditional.class.getName())) {
+			return false;
+		}
+		for (Condition condition : conditions) {
+			ConfigurationPhase requiredPhase = null;
+			if (condition instanceof ConfigurationCondition) {
+				requiredPhase = ((ConfigurationCondition) condition).getConfigurationPhase();
+			}
+			if ((requiredPhase == null || requiredPhase == phase) && !condition.matches(this.context, metadata)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+```
 
 
 
@@ -6607,6 +6953,50 @@ try {   Long start = System.currentTimeMillis();   while(true) {       String re
 > 具体来说是AP方案的补充
 
 ![图片](java.assets/640-20220421204333390.png)
+
+
+
+### ZAB
+
+zookeeper为了解决分布式一致性提出的协议
+
+主要角色：
+
+1. leader：集群中唯一写请求处理者，能够发起投票
+2. follower：能够接受客户端请求，如果是读请求可以自己处理，写请求转发给leader
+3. observer：没有选举权和被选举权的follower
+
+
+
+#### 消息广播模式
+
+为了能顺利传播消息
+
+zookeeper维护了两个队列。队列保证了消息的接受是根据顺序来发送给每个follower的
+
+![消息广播](java.assets/08ccce48190fe4edcbcbb223d6231876.png)
+
+同时zookeeper还定义了一个**ZXID**，他是一个64位long型，高32位位epoch年代，低32位代表事务id，epoch根据leader变化而变化
+
+proposal根据**ZXID**来进行排序
+
+
+
+#### 崩溃恢复
+
+当zookeeper的leader挂掉后，需要选举新的leader
+
+1. 集群进入LOOKIng状态，每个follower给自己投票，并发送自己的myid和ZXID
+2. follower收到其他人的投票后根据ZXID判断，如果比自己大那么转而给相应的投票
+3. 直到某一个follower掌握了超过一半的投票数量
+
+
+
+**上面有个问题在于，怎么保证集群的数据一致性**
+
+分为两种：1、确保已经被Leader提交的提案能够被所有follower提交；2、确保跳过被丢弃的提案
+
+
 
 
 
